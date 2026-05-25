@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Тёмный Коридор</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: #000;
+    color: #c0c0c0;
+    font-family: 'Courier New', monospace;
+    overflow: hidden;
+    cursor: none;
+  }
+  body { position: relative; }
+
+  /* Фонарик */
+  #flashlight {
+    position: fixed;
+    pointer-events: none;
+    width: 100vw;
+    height: 100vh;
+    top: 0;
+    left: 0;
+    background: radial-gradient(circle 180px at var(--x, 50%) var(--y, 50%),
+      rgba(0,0,0,0) 0%,
+      rgba(0,0,0,0.6) 30%,
+      rgba(0,0,0,0.95) 60%,
+      rgba(0,0,0,1) 100%);
+    z-index: 100;
+    transition: background 0.05s linear;
+  }
+
+  /* Коридор */
+  .scene {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at center 70%, #1a0808 0%, #050000 50%, #000 100%),
+      #000;
+    overflow: hidden;
+  }
+
+  /* Стены - перспектива */
+  .wall {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 50%;
+    background:
+      repeating-linear-gradient(
+        90deg,
+        #0a0505 0px,
+        #050202 40px,
+        #0a0505 80px
+      );
+    opacity: 0.7;
+  }
+  .wall.left {
+    left: 0;
+    transform: perspective(600px) rotateY(35deg);
+    transform-origin: left center;
+  }
+  .wall.right {
+    right: 0;
+    transform: perspective(600px) rotateY(-35deg);
+    transform-origin: right center;
+  }
+
+  /* Дальний конец коридора */
+  .vanish {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100px;
+    height: 100px;
+    background: radial-gradient(circle, #1a0000 0%, #000 80%);
+    box-shadow: 0 0 80px 20px #000 inset;
+  }
+
+  /* Фигура в темноте */
+  #figure {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -30%) scale(0);
+    width: 80px;
+    height: 200px;
+    background: linear-gradient(180deg, #000 0%, #0a0a0a 40%, #000 100%);
+    border-radius: 40px 40px 0 0;
+    opacity: 0;
+    transition: transform 3s ease-in, opacity 3s ease-in;
+    z-index: 10;
+  }
+  #figure::before {
+    content: '';
+    position: absolute;
+    top: 35px;
+    left: 22px;
+    width: 8px;
+    height: 8px;
+    background: #ff0000;
+    border-radius: 50%;
+    box-shadow: 25px 0 0 #ff0000;
+    animation: blink 4s infinite;
+  }
+  @keyframes blink {
+    0%, 90%, 100% { opacity: 1; }
+    95% { opacity: 0; }
+  }
+  #figure.show {
+    opacity: 1;
+    transform: translate(-50%, -30%) scale(1);
+  }
+  #figure.attack {
+    transition: transform 0.3s ease-out, opacity 0.3s ease-out;
+    transform: translate(-50%, -30%) scale(10);
+  }
+
+  /* Текст */
+  #message {
+    position: fixed;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #8a0000;
+    font-size: 22px;
+    letter-spacing: 4px;
+    z-index: 200;
+    text-shadow: 0 0 10px #ff0000, 0 0 20px #500;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 1s;
+  }
+  #message.show { opacity: 1; }
+
+  /* Курсор-крест */
+  #cursor {
+    position: fixed;
+    width: 20px;
+    height: 20px;
+    pointer-events: none;
+    z-index: 300;
+    transform: translate(-50%, -50%);
+  }
+  #cursor::before, #cursor::after {
+    content: '';
+    position: absolute;
+    background: #5a0000;
+  }
+  #cursor::before {
+    top: 50%; left: 0;
+    width: 100%; height: 1px;
+    transform: translateY(-50%);
+  }
+  #cursor::after {
+    left: 50%; top: 0;
+    height: 100%; width: 1px;
+    transform: translateX(-50%);
+  }
+
+  /* Глюк-эффект */
+  #glitch {
+    position: fixed;
+    inset: 0;
+    background: #800;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 250;
+    mix-blend-mode: screen;
+  }
+  #glitch.flash {
+    animation: glitch 0.4s steps(4);
+  }
+  @keyframes glitch {
+    0%   { opacity: 0; }
+    25%  { opacity: 0.8; transform: translate(-5px, 3px); }
+    50%  { opacity: 0.1; transform: translate(4px, -2px); }
+    75%  { opacity: 0.9; transform: translate(-3px, 5px); }
+    100% { opacity: 0; transform: translate(0, 0); }
+  }
+
+  /* Финальный jumpscare */
+  #jumpscare {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  #jumpscare.active { display: flex; }
+  #jumpscare .face {
+    width: 100%;
+    height: 100%;
+    background:
+      radial-gradient(circle at 30% 35%, #fff 0%, #fff 4%, #000 5%, #000 8%, transparent 9%),
+      radial-gradient(circle at 70% 35%, #fff 0%, #fff 4%, #000 5%, #000 8%, transparent 9%),
+      radial-gradient(ellipse at 50% 70%, #500 0%, #200 6%, transparent 10%),
+      radial-gradient(ellipse at 50% 50%, #2a0000 0%, #100 60%, #000 100%);
+    animation: shake 0.05s infinite;
+  }
+  @keyframes shake {
+    0%   { transform: translate(0,0); }
+    25%  { transform: translate(-6px, 4px); }
+    50%  { transform: translate(5px, -3px); }
+    75%  { transform: translate(-4px, -5px); }
+    100% { transform: translate(3px, 6px); }
+  }
+
+  /* Стартовый экран */
+  #start {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 500;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #800;
+    text-align: center;
+    cursor: pointer;
+  }
+  #start h1 {
+    font-size: 56px;
+    letter-spacing: 12px;
+    text-shadow: 0 0 25px #500, 0 0 50px #200;
+    margin-bottom: 30px;
+    animation: flicker 3s infinite;
+  }
+  #start p {
+    font-size: 14px;
+    color: #555;
+    letter-spacing: 3px;
+  }
+  @keyframes flicker {
+    0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
+      opacity: 1;
+      text-shadow: 0 0 25px #500, 0 0 50px #200;
+    }
+    20%, 24%, 55% { opacity: 0.3; text-shadow: none; }
+  }
+
+  /* Виньетка */
+  .vignette {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    box-shadow: inset 0 0 200px 60px #000;
+    z-index: 90;
+  }
+
+  /* Шум */
+  .noise {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.06;
+    z-index: 80;
+    background-image:
+      repeating-radial-gradient(circle at 20% 30%, #fff 0, transparent 1px),
+      repeating-radial-gradient(circle at 60% 70%, #fff 0, transparent 1px),
+      repeating-radial-gradient(circle at 80% 20%, #fff 0, transparent 1px),
+      repeating-radial-gradient(circle at 40% 80%, #fff 0, transparent 1px);
+    animation: noise 0.2s infinite;
+  }
+  @keyframes noise {
+    0% { transform: translate(0, 0); }
+    25% { transform: translate(-2px, 1px); }
+    50% { transform: translate(2px, -1px); }
+    75% { transform: translate(-1px, 2px); }
+    100% { transform: translate(1px, -2px); }
+  }
+</style>
+</head>
+<body>
+
+<div id="start">
+  <h1>ТЁМНЫЙ&nbsp;КОРИДОР</h1>
+  <p>нажмите чтобы войти... если осмелитесь</p>
+</div>
+
+<div class="scene">
+  <div class="wall left"></div>
+  <div class="wall right"></div>
+  <div class="vanish"></div>
+  <div id="figure"></div>
+</div>
+
+<div class="noise"></div>
+<div class="vignette"></div>
+<div id="flashlight"></div>
+<div id="glitch"></div>
+<div id="message">слышишь шаги?</div>
+<div id="cursor"></div>
+
+<div id="jumpscare">
+  <div class="face"></div>
+</div>
+
+<audio id="ambient" loop>
+  <source src="data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YRAAAAAAAAAAAAAAAAAAAAAAAAAA" type="audio/wav">
+</audio>
+
+<script>
+const flashlight = document.getElementById('flashlight');
+const cursor = document.getElementById('cursor');
+const figure = document.getElementById('figure');
+const message = document.getElementById('message');
+const glitch = document.getElementById('glitch');
+const jumpscare = document.getElementById('jumpscare');
+const start = document.getElementById('start');
+
+let started = false;
+let audioCtx = null;
+
+function playTone(freq, dur, type = 'sine', vol = 0.1) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.value = vol;
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  osc.stop(audioCtx.currentTime + dur);
+}
+
+function playHeartbeat() {
+  if (!audioCtx) return;
+  playTone(50, 0.12, 'sine', 0.25);
+  setTimeout(() => playTone(45, 0.15, 'sine', 0.2), 180);
+}
+
+function playWhisper() {
+  if (!audioCtx) return;
+  const noise = audioCtx.createBufferSource();
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 1.2, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = (Math.random() * 2 - 1) * 0.15 * Math.sin(i / 800);
+  }
+  noise.buffer = buffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 1200;
+  filter.Q.value = 2;
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.4;
+  noise.connect(filter).connect(gain).connect(audioCtx.destination);
+  noise.start();
+  noise.stop(audioCtx.currentTime + 1.2);
+}
+
+function playScream() {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(120, audioCtx.currentTime + 1.5);
+  gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.5);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 1.5);
+
+  const osc2 = audioCtx.createOscillator();
+  const gain2 = audioCtx.createGain();
+  osc2.type = 'square';
+  osc2.frequency.setValueAtTime(1200, audioCtx.currentTime);
+  osc2.frequency.exponentialRampToValueAtTime(200, audioCtx.currentTime + 1.5);
+  gain2.gain.setValueAtTime(0.2, audioCtx.currentTime);
+  gain2.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.5);
+  osc2.connect(gain2).connect(audioCtx.destination);
+  osc2.start();
+  osc2.stop(audioCtx.currentTime + 1.5);
+}
+
+document.addEventListener('mousemove', (e) => {
+  flashlight.style.setProperty('--x', e.clientX + 'px');
+  flashlight.style.setProperty('--y', e.clientY + 'px');
+  cursor.style.left = e.clientX + 'px';
+  cursor.style.top = e.clientY + 'px';
+});
+
+const messages = [
+  'слышишь шаги?',
+  'оно близко...',
+  'не оборачивайся',
+  'оно за тобой',
+  'беги',
+  'слишком поздно'
+];
+
+function showMessage(idx) {
+  message.textContent = messages[idx];
+  message.classList.add('show');
+  setTimeout(() => message.classList.remove('show'), 2500);
+}
+
+function flashGlitch() {
+  glitch.classList.add('flash');
+  setTimeout(() => glitch.classList.remove('flash'), 400);
+}
+
+function beginHorror() {
+  if (started) return;
+  started = true;
+  start.style.display = 'none';
+
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  } catch (e) {}
+
+  // Сердцебиение
+  const heartbeat = setInterval(playHeartbeat, 1400);
+
+  // Сообщения
+  let msgIdx = 0;
+  showMessage(msgIdx++);
+  const msgInterval = setInterval(() => {
+    if (msgIdx < messages.length) {
+      showMessage(msgIdx++);
+    }
+  }, 4500);
+
+  // Шёпоты
+  setTimeout(() => {
+    playWhisper();
+    flashGlitch();
+  }, 3000);
+
+  setTimeout(() => {
+    playWhisper();
+    flashGlitch();
+  }, 7500);
+
+  // Появление фигуры
+  setTimeout(() => {
+    figure.classList.add('show');
+    playWhisper();
+  }, 9000);
+
+  // Кратковременный глюк
+  setTimeout(() => {
+    flashGlitch();
+    playWhisper();
+  }, 13000);
+
+  setTimeout(() => {
+    flashGlitch();
+  }, 17000);
+
+  // Финальный jumpscare
+  setTimeout(() => {
+    clearInterval(heartbeat);
+    clearInterval(msgInterval);
+    figure.classList.add('attack');
+    setTimeout(() => {
+      jumpscare.classList.add('active');
+      playScream();
+      // Тряска экрана
+      document.body.style.animation = 'shake 0.05s infinite';
+    }, 250);
+
+    setTimeout(() => {
+      jumpscare.classList.remove('active');
+      document.body.style.animation = '';
+      figure.classList.remove('attack', 'show');
+      message.textContent = 'ты выжил... пока что';
+      message.classList.add('show');
+    }, 3500);
+  }, 22000);
+}
+
+start.addEventListener('click', beginHorror);
+document.addEventListener('keydown', beginHorror);
+</script>
+</body>
+</html>
