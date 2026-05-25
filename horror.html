@@ -1,0 +1,1363 @@
+<!DOCTYPE html>
+<!--
+  ТЕНИ В ДОМЕ - мобильная хоррор-игра (PWA, готова к упаковке в APK).
+
+  Как играть прямо сейчас:
+    Открой horror.html в Chrome на телефоне (или просто браузере).
+    Меню Chrome -> "Добавить на главный экран" -> запускается как приложение.
+
+  Как собрать настоящий APK (нужны Node 18+, JDK 17, Android Studio):
+    npm install -D @capacitor/cli @capacitor/core @capacitor/android
+    npx cap add android
+    npx cap sync android
+    cd android && ./gradlew assembleDebug
+    # APK: android/app/build/outputs/apk/debug/app-debug.apk
+
+  Альтернатива без Android Studio: залить репо на любой статический хостинг,
+  открыть pwabuilder.com, ввести URL, скачать готовый APK/AAB.
+
+  Файлы проекта:
+    horror.html           - сама игра
+    manifest.webmanifest  - PWA-манифест
+    sw.js                 - service worker (офлайн)
+    capacitor.config.json - конфиг Capacitor для APK
+    icon-192.svg / icon-512.svg - иконки
+
+  Управление (на телефоне):
+    Левый джойстик - движение
+    ФОНАРЬ - вкл/выкл свет (свет привлекает существо, но без него заблудишься)
+    БЕГ - быстрее, но шумно
+    ВЗЯТЬ - подобрать предохранитель / открыть дверь
+
+  Цель: собрать 5 предохранителей и выйти через входную дверь.
+  Существо реагирует на свет и звук - бег слышит за версту, фонарь видит издалека.
+  Стоя на месте, ты задерживаешь дыхание - оно слышит хуже.
+  Фонарём в лицо - оно отшатнётся.
+-->
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Тени в Доме</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: #000;
+    color: #d8d8d8;
+    font-family: 'Courier New', monospace;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #game-wrap {
+    position: fixed;
+    inset: 0;
+  }
+  canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    background: #000;
+  }
+  #ui {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .pad {
+    position: absolute;
+    pointer-events: auto;
+  }
+  #joy {
+    left: 4vh;
+    bottom: 6vh;
+    width: 28vh;
+    height: 28vh;
+    max-width: 220px;
+    max-height: 220px;
+    border: 2px solid rgba(180, 30, 30, 0.4);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.04);
+  }
+  #joy .stick {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 38%; height: 38%;
+    transform: translate(-50%, -50%);
+    background: rgba(200, 50, 50, 0.35);
+    border: 2px solid rgba(220, 60, 60, 0.7);
+    border-radius: 50%;
+  }
+  .btn {
+    position: absolute;
+    right: 4vh;
+    width: 14vh;
+    height: 14vh;
+    max-width: 110px;
+    max-height: 110px;
+    border-radius: 50%;
+    background: rgba(40, 0, 0, 0.55);
+    border: 2px solid rgba(220, 60, 60, 0.6);
+    color: #e8c8c8;
+    font-size: 14px;
+    line-height: 1.1;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    letter-spacing: 1px;
+  }
+  .btn.active { background: rgba(120, 20, 20, 0.7); }
+  #btn-light { bottom: 6vh; }
+  #btn-action { bottom: 22vh; }
+  #btn-run { bottom: 38vh; width: 10vh; height: 10vh; max-width: 80px; max-height: 80px; font-size: 11px; }
+  #hud {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    text-shadow: 0 0 6px #000;
+  }
+  .hud-row { display: flex; align-items: center; gap: 8px; }
+  .bar {
+    flex: 1;
+    height: 5px;
+    background: rgba(255, 255, 255, 0.07);
+    border-radius: 2px;
+    overflow: hidden;
+    max-width: 220px;
+  }
+  .bar > div { height: 100%; transition: width 0.2s ease; }
+  .battery > div { background: linear-gradient(90deg, #d04040, #f0a040); }
+  .sanity > div { background: linear-gradient(90deg, #6040a0, #b070d0); }
+  #fuses { font-size: 14px; letter-spacing: 2px; }
+  .label { width: 64px; color: #aa8888; font-size: 11px; }
+  #message {
+    position: absolute;
+    left: 0; right: 0;
+    top: 35%;
+    text-align: center;
+    font-size: 16px;
+    color: #d8c8c8;
+    text-shadow: 0 0 8px #000;
+    padding: 0 20px;
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+  #message.show { opacity: 1; }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    color: #d8d8d8;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 20;
+    pointer-events: auto;
+    text-align: center;
+  }
+  #overlay.hidden { display: none; }
+  #overlay h1 {
+    color: #a02020;
+    font-size: 30px;
+    letter-spacing: 6px;
+    margin-bottom: 16px;
+    text-shadow: 0 0 14px rgba(160, 32, 32, 0.6);
+  }
+  #overlay p {
+    font-size: 14px;
+    line-height: 1.6;
+    max-width: 480px;
+    margin-bottom: 10px;
+    color: #b8b8b8;
+  }
+  #overlay button {
+    margin-top: 20px;
+    padding: 14px 36px;
+    background: #1a0000;
+    color: #e0c0c0;
+    border: 2px solid #6a1010;
+    font-family: inherit;
+    font-size: 16px;
+    letter-spacing: 3px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  #overlay button:active { background: #2a0808; }
+  #vignette {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-shadow: inset 0 0 180px 60px #000;
+    z-index: 4;
+  }
+  #blood {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 50%, transparent 40%, rgba(120, 0, 0, 0.5) 100%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+    z-index: 6;
+  }
+  #blood.show { opacity: 1; }
+  #flash {
+    position: absolute;
+    inset: 0;
+    background: #fff;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 8;
+  }
+  .small { font-size: 12px; color: #888; }
+  .jumpscare {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .jumpscare.show { opacity: 1; }
+  .jumpscare .face {
+    width: 80vmin;
+    height: 80vmin;
+    position: relative;
+  }
+  .jumpscare svg { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="game-wrap">
+  <canvas id="game"></canvas>
+  <div id="vignette"></div>
+  <div id="blood"></div>
+  <div id="ui">
+    <div id="hud">
+      <div class="hud-row"><span class="label">БАТАРЕЯ</span>
+        <div class="bar battery"><div id="bar-battery" style="width:100%"></div></div>
+      </div>
+      <div class="hud-row"><span class="label">РАССУДОК</span>
+        <div class="bar sanity"><div id="bar-sanity" style="width:100%"></div></div>
+      </div>
+      <div class="hud-row"><span id="fuses">◯ ◯ ◯ ◯ ◯</span></div>
+    </div>
+    <div id="message"></div>
+    <div id="joy" class="pad"><div class="stick"></div></div>
+    <div id="btn-light" class="btn">ФОНАРЬ</div>
+    <div id="btn-action" class="btn">ВЗЯТЬ</div>
+    <div id="btn-run" class="btn">БЕГ</div>
+  </div>
+  <div id="flash"></div>
+  <div class="jumpscare" id="jumpscare">
+    <div class="face">
+      <svg viewBox="0 0 200 200">
+        <circle cx="100" cy="100" r="95" fill="#0a0000"/>
+        <ellipse cx="70" cy="90" rx="14" ry="22" fill="#fff"/>
+        <ellipse cx="130" cy="90" rx="14" ry="22" fill="#fff"/>
+        <circle cx="70" cy="92" r="6" fill="#a00000"/>
+        <circle cx="130" cy="92" r="6" fill="#a00000"/>
+        <path d="M 55 135 Q 100 175 145 135 Q 130 150 125 140 Q 115 155 105 142 Q 95 158 85 142 Q 75 155 70 140 Q 65 150 55 135 Z" fill="#400000"/>
+        <line x1="58" y1="138" x2="62" y2="148" stroke="#fff" stroke-width="2"/>
+        <line x1="72" y1="143" x2="76" y2="153" stroke="#fff" stroke-width="2"/>
+        <line x1="100" y1="147" x2="100" y2="158" stroke="#fff" stroke-width="2"/>
+        <line x1="124" y1="143" x2="128" y2="153" stroke="#fff" stroke-width="2"/>
+        <line x1="138" y1="138" x2="142" y2="148" stroke="#fff" stroke-width="2"/>
+      </svg>
+    </div>
+  </div>
+  <div id="overlay">
+    <h1>ТЕНИ В ДОМЕ</h1>
+    <p>Ты очнулся в заброшенном доме. Дверь заперта. Где-то здесь — <b>5 предохранителей</b>.
+    Найди их все и доберись до выхода.</p>
+    <p>Ты не один. <b>Оно</b> ходит по коридорам. Свет фонаря выдаст тебя. Бег услышат.
+    Если рядом — задержи дыхание (отпусти джойстик).</p>
+    <p class="small">Управление: левый джойстик — движение, ФОНАРЬ — свет, БЕГ — быстрее (шумно),
+    ВЗЯТЬ — поднять предмет / открыть дверь.</p>
+    <p class="small">Лучше играть в наушниках. Звук добавляет атмосферу.</p>
+    <button id="start-btn">ВОЙТИ В ДОМ</button>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('start-btn');
+const messageEl = document.getElementById('message');
+const bloodEl = document.getElementById('blood');
+const flashEl = document.getElementById('flash');
+const jumpscareEl = document.getElementById('jumpscare');
+
+let DPR = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+let CW = 0, CH = 0;
+function resize() {
+  CW = window.innerWidth;
+  CH = window.innerHeight;
+  canvas.width = CW * DPR;
+  canvas.height = CH * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ===== Map (grid of cells: '#' wall, '.' floor, 'D' exit door, 'S' player spawn, 'F' fuse slot) =====
+const MAP = [
+  "##################",
+  "#S....#...#...F..#",
+  "#.....#.....#....#",
+  "#.###.#####.#.####",
+  "#.#.....#......F.#",
+  "#.#.###.#.######.#",
+  "#.#.#.....#......#",
+  "#.#.#.######.###.#",
+  "#...#F#......#.#.#",
+  "###.#.#.######.#.#",
+  "#.....#........#.#",
+  "#.###.########.#.#",
+  "#.#.F........#.#.#",
+  "#.#.######.###.#.#",
+  "#.#........#.....#",
+  "#.######.D.#.#####",
+  "#......F.....#...#",
+  "##################",
+];
+const ROWS = MAP.length;
+const COLS = MAP[0].length;
+const CELL = 64;
+const WORLD_W = COLS * CELL;
+const WORLD_H = ROWS * CELL;
+
+function cellAt(cx, cy) {
+  if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) return '#';
+  return MAP[cy][cx];
+}
+function isWall(cx, cy) { return cellAt(cx, cy) === '#'; }
+function isWallPx(px, py) {
+  return isWall(Math.floor(px / CELL), Math.floor(py / CELL));
+}
+
+// ===== Game state =====
+let game;
+
+function initGame() {
+  let spawn = { x: 1.5 * CELL, y: 1.5 * CELL };
+  const fuses = [];
+  let exitDoor = null;
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const c = MAP[y][x];
+      if (c === 'S') spawn = { x: (x + 0.5) * CELL, y: (y + 0.5) * CELL };
+      else if (c === 'F') fuses.push({ x: (x + 0.5) * CELL, y: (y + 0.5) * CELL, taken: false });
+      else if (c === 'D') exitDoor = { x: (x + 0.5) * CELL, y: (y + 0.5) * CELL, open: false };
+    }
+  }
+  // Monster spawn - far from player
+  let monsterStart = { x: WORLD_W - 2.5 * CELL, y: WORLD_H - 2.5 * CELL };
+  // ensure floor
+  for (let y = ROWS - 2; y >= 1; y--) {
+    for (let x = COLS - 2; x >= 1; x--) {
+      if (MAP[y][x] === '.' || MAP[y][x] === 'F') {
+        monsterStart = { x: (x + 0.5) * CELL, y: (y + 0.5) * CELL };
+        y = -1; break;
+      }
+    }
+  }
+  game = {
+    player: {
+      x: spawn.x, y: spawn.y,
+      r: 12, facing: 0,
+      speedWalk: 110, speedRun: 175, speedSneak: 60,
+      battery: 100, sanity: 100,
+      lightOn: false, running: false,
+      breathHeld: false,
+      noise: 0, // current noise level emitted (decays)
+    },
+    monster: {
+      x: monsterStart.x, y: monsterStart.y,
+      r: 14, speed: 95,
+      state: 'patrol', // 'patrol' | 'investigate' | 'chase'
+      target: null,
+      patrolTimer: 0,
+      path: [],
+      pathTimer: 0,
+      growl: 0,
+      stunned: 0,
+    },
+    fuses,
+    exitDoor,
+    fusesCollected: 0,
+    win: false,
+    dead: false,
+    time: 0,
+    msgTimer: 0,
+    cameraX: 0, cameraY: 0,
+    heartbeat: 0,
+    flashTimer: 0,
+    shakeT: 0,
+    notes: [
+      "День 3. Я слышу его в стенах...",
+      "Запри двери. Не свети ему в лицо.",
+      "Свет привлекает его. Но без света — заблудишься.",
+      "Бежать = смерть. Беги только если он близко.",
+      "5 предохранителей. Подвал. Чердак. Третья дверь.",
+    ],
+    notesShown: 0,
+  };
+}
+
+// ===== Input =====
+const input = {
+  moveX: 0, moveY: 0,
+  lightOn: false,
+  running: false,
+  actionPressed: false,
+};
+
+function setupJoystick() {
+  const joy = document.getElementById('joy');
+  const stick = joy.querySelector('.stick');
+  let activeId = null;
+  let cx = 0, cy = 0, radius = 0;
+  function refreshCenter() {
+    const r = joy.getBoundingClientRect();
+    cx = r.left + r.width / 2;
+    cy = r.top + r.height / 2;
+    radius = r.width / 2;
+  }
+  function update(e, started) {
+    const t = [...e.touches, ...(e.changedTouches || [])].find(t => t.identifier === activeId);
+    if (!t) return;
+    refreshCenter();
+    let dx = t.clientX - cx;
+    let dy = t.clientY - cy;
+    const d = Math.hypot(dx, dy);
+    if (d > radius) {
+      dx = dx / d * radius;
+      dy = dy / d * radius;
+    }
+    stick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    input.moveX = dx / radius;
+    input.moveY = dy / radius;
+  }
+  joy.addEventListener('touchstart', (e) => {
+    if (activeId !== null) return;
+    const t = e.changedTouches[0];
+    activeId = t.identifier;
+    refreshCenter();
+    update(e, true);
+    e.preventDefault();
+  }, { passive: false });
+  joy.addEventListener('touchmove', (e) => {
+    if (activeId === null) return;
+    update(e, false);
+    e.preventDefault();
+  }, { passive: false });
+  const end = (e) => {
+    if (activeId === null) return;
+    const ended = [...e.changedTouches].some(t => t.identifier === activeId);
+    if (ended) {
+      activeId = null;
+      input.moveX = 0; input.moveY = 0;
+      stick.style.transform = `translate(-50%, -50%)`;
+    }
+  };
+  joy.addEventListener('touchend', end);
+  joy.addEventListener('touchcancel', end);
+  // Mouse fallback
+  let mouseDown = false;
+  joy.addEventListener('mousedown', (e) => {
+    mouseDown = true;
+    refreshCenter();
+    handleMouse(e);
+  });
+  window.addEventListener('mousemove', (e) => { if (mouseDown) handleMouse(e); });
+  window.addEventListener('mouseup', () => {
+    mouseDown = false;
+    input.moveX = 0; input.moveY = 0;
+    stick.style.transform = `translate(-50%, -50%)`;
+  });
+  function handleMouse(e) {
+    let dx = e.clientX - cx, dy = e.clientY - cy;
+    const d = Math.hypot(dx, dy);
+    if (d > radius) { dx = dx / d * radius; dy = dy / d * radius; }
+    stick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    input.moveX = dx / radius;
+    input.moveY = dy / radius;
+  }
+}
+
+function setupButton(id, prop, kind) {
+  // kind: 'toggle' (lightOn) | 'hold' (running) | 'press' (actionPressed)
+  const el = document.getElementById(id);
+  const onDown = (e) => {
+    e.preventDefault();
+    if (kind === 'toggle') {
+      input[prop] = !input[prop];
+      el.classList.toggle('active', input[prop]);
+    } else if (kind === 'hold') {
+      input[prop] = true;
+      el.classList.add('active');
+    } else if (kind === 'press') {
+      input.actionPressed = true;
+      el.classList.add('active');
+      setTimeout(() => el.classList.remove('active'), 150);
+    }
+  };
+  const onUp = (e) => {
+    if (kind === 'hold') {
+      input[prop] = false;
+      el.classList.remove('active');
+    }
+  };
+  el.addEventListener('touchstart', onDown, { passive: false });
+  el.addEventListener('touchend', onUp);
+  el.addEventListener('touchcancel', onUp);
+  el.addEventListener('mousedown', onDown);
+  el.addEventListener('mouseup', onUp);
+}
+
+setupJoystick();
+setupButton('btn-light', 'lightOn', 'toggle');
+setupButton('btn-run', 'running', 'hold');
+setupButton('btn-action', 'action', 'press');
+
+// Keyboard for desktop play
+const keys = {};
+window.addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  if (k === 'f') {
+    input.lightOn = !input.lightOn;
+    document.getElementById('btn-light').classList.toggle('active', input.lightOn);
+  } else if (k === ' ' || k === 'e') {
+    input.actionPressed = true;
+  }
+});
+window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+
+function readKeyboard() {
+  let kx = 0, ky = 0;
+  if (keys['w'] || keys['arrowup']) ky -= 1;
+  if (keys['s'] || keys['arrowdown']) ky += 1;
+  if (keys['a'] || keys['arrowleft']) kx -= 1;
+  if (keys['d'] || keys['arrowright']) kx += 1;
+  if (kx || ky) {
+    const l = Math.hypot(kx, ky);
+    input.moveX = kx / l;
+    input.moveY = ky / l;
+  }
+  input.running = input.running || !!keys['shift'];
+}
+
+// ===== Audio =====
+let audioCtx = null;
+let ambientGain = null;
+let heartbeatGain = null;
+let heartbeatOsc = null;
+let heartbeatInterval = null;
+
+function ensureAudio() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  } catch (e) { return; }
+  // ambient drone
+  const drone = audioCtx.createOscillator();
+  const drone2 = audioCtx.createOscillator();
+  drone.type = 'sawtooth';
+  drone2.type = 'sine';
+  drone.frequency.value = 55;
+  drone2.frequency.value = 78;
+  const droneGain = audioCtx.createGain();
+  droneGain.gain.value = 0.04;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 200;
+  drone.connect(filter); drone2.connect(filter);
+  filter.connect(droneGain);
+  droneGain.connect(audioCtx.destination);
+  drone.start(); drone2.start();
+  ambientGain = droneGain;
+}
+
+function playHeartbeat(intensity) {
+  if (!audioCtx || intensity <= 0) return;
+  if (heartbeatInterval) clearInterval(heartbeatInterval);
+  const period = Math.max(380, 900 - intensity * 600);
+  function thump() {
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(70, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 0.1);
+    g.gain.setValueAtTime(intensity * 0.25, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.2);
+  }
+  heartbeatInterval = setInterval(thump, period);
+}
+function stopHeartbeat() {
+  if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
+}
+
+function playSound(type) {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  if (type === 'pickup') {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.frequency.setValueAtTime(440, now);
+    o.frequency.linearRampToValueAtTime(880, now + 0.1);
+    g.gain.setValueAtTime(0.15, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(now + 0.3);
+  } else if (type === 'growl') {
+    const o = audioCtx.createOscillator();
+    const o2 = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sawtooth'; o2.type = 'square';
+    o.frequency.setValueAtTime(45 + Math.random() * 10, now);
+    o2.frequency.setValueAtTime(60 + Math.random() * 15, now);
+    g.gain.setValueAtTime(0.001, now);
+    g.gain.exponentialRampToValueAtTime(0.18, now + 0.1);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    const f = audioCtx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 400;
+    o.connect(f); o2.connect(f); f.connect(g); g.connect(audioCtx.destination);
+    o.start(); o2.start();
+    o.stop(now + 0.7); o2.stop(now + 0.7);
+  } else if (type === 'scream') {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(220, now);
+    o.frequency.exponentialRampToValueAtTime(60, now + 1.2);
+    g.gain.setValueAtTime(0.3, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(now + 1.5);
+  } else if (type === 'door') {
+    const buf = audioCtx.createBuffer(1, 11025, 22050);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const g = audioCtx.createGain();
+    g.gain.value = 0.18;
+    const f = audioCtx.createBiquadFilter();
+    f.type = 'bandpass'; f.frequency.value = 350;
+    src.connect(f); f.connect(g); g.connect(audioCtx.destination);
+    src.start();
+  } else if (type === 'noise') {
+    const buf = audioCtx.createBuffer(1, 8192, 22050);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.12, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    src.connect(g); g.connect(audioCtx.destination);
+    src.start();
+  }
+}
+
+// ===== Helpers =====
+function showMessage(text, duration = 3) {
+  messageEl.textContent = text;
+  messageEl.classList.add('show');
+  game.msgTimer = duration;
+}
+
+function clearMessage() {
+  messageEl.classList.remove('show');
+}
+
+function tryMove(obj, dx, dy) {
+  // axis-separated collision
+  let nx = obj.x + dx;
+  if (!isWallPx(nx - obj.r, obj.y) && !isWallPx(nx + obj.r, obj.y) &&
+      !isWallPx(nx - obj.r, obj.y - obj.r) && !isWallPx(nx + obj.r, obj.y - obj.r) &&
+      !isWallPx(nx - obj.r, obj.y + obj.r) && !isWallPx(nx + obj.r, obj.y + obj.r)) {
+    obj.x = nx;
+  }
+  let ny = obj.y + dy;
+  if (!isWallPx(obj.x - obj.r, ny) && !isWallPx(obj.x + obj.r, ny) &&
+      !isWallPx(obj.x - obj.r, ny - obj.r) && !isWallPx(obj.x + obj.r, ny - obj.r) &&
+      !isWallPx(obj.x - obj.r, ny + obj.r) && !isWallPx(obj.x + obj.r, ny + obj.r)) {
+    obj.y = ny;
+  }
+}
+
+// Line-of-sight: stop at wall
+function lineOfSight(ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const d = Math.hypot(dx, dy);
+  const steps = Math.ceil(d / 6);
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    if (isWallPx(ax + dx * t, ay + dy * t)) return false;
+  }
+  return true;
+}
+
+// BFS pathfinding on cell grid (target -> path of cell centers)
+function findPath(fromX, fromY, toX, toY) {
+  const sx = Math.floor(fromX / CELL), sy = Math.floor(fromY / CELL);
+  const tx = Math.floor(toX / CELL), ty = Math.floor(toY / CELL);
+  if (sx === tx && sy === ty) return [];
+  const visited = new Uint8Array(ROWS * COLS);
+  const prev = new Int32Array(ROWS * COLS).fill(-1);
+  const q = [sy * COLS + sx];
+  visited[sy * COLS + sx] = 1;
+  let head = 0;
+  let found = false;
+  while (head < q.length) {
+    const cur = q[head++];
+    const cx = cur % COLS, cy = Math.floor(cur / COLS);
+    if (cx === tx && cy === ty) { found = true; break; }
+    const neigh = [[1,0],[-1,0],[0,1],[0,-1]];
+    for (const [ddx, ddy] of neigh) {
+      const nx2 = cx + ddx, ny2 = cy + ddy;
+      if (nx2 < 0 || ny2 < 0 || nx2 >= COLS || ny2 >= ROWS) continue;
+      const idx = ny2 * COLS + nx2;
+      if (visited[idx] || isWall(nx2, ny2)) continue;
+      visited[idx] = 1;
+      prev[idx] = cur;
+      q.push(idx);
+    }
+  }
+  if (!found) return [];
+  const path = [];
+  let cur = ty * COLS + tx;
+  while (cur !== sy * COLS + sx) {
+    const cx = cur % COLS, cy = Math.floor(cur / COLS);
+    path.unshift({ x: (cx + 0.5) * CELL, y: (cy + 0.5) * CELL });
+    cur = prev[cur];
+    if (cur < 0) break;
+  }
+  return path;
+}
+
+function randomFloorCell() {
+  for (let i = 0; i < 100; i++) {
+    const x = 1 + Math.floor(Math.random() * (COLS - 2));
+    const y = 1 + Math.floor(Math.random() * (ROWS - 2));
+    if (!isWall(x, y)) return { x: (x + 0.5) * CELL, y: (y + 0.5) * CELL };
+  }
+  return { x: WORLD_W / 2, y: WORLD_H / 2 };
+}
+
+// ===== Update =====
+function update(dt) {
+  if (game.win || game.dead) return;
+  game.time += dt;
+  readKeyboard();
+  const p = game.player;
+  const m = game.monster;
+
+  // Toggle light is driven by input.lightOn directly
+  if (input.lightOn && p.battery > 0) p.lightOn = true;
+  else p.lightOn = false;
+
+  // Battery
+  if (p.lightOn) p.battery = Math.max(0, p.battery - dt * 1.6);
+
+  // Movement
+  let mx = input.moveX, my = input.moveY;
+  const mag = Math.hypot(mx, my);
+  let moving = mag > 0.15;
+  if (moving) {
+    mx /= mag; my /= mag;
+    p.facing = Math.atan2(my, mx);
+  }
+  // breathHeld = no movement input
+  p.breathHeld = !moving;
+
+  p.running = input.running && moving && p.battery > 5;
+  let speed = p.speedWalk;
+  if (p.running) speed = p.speedRun;
+  else if (!moving) speed = 0;
+  // sneak when light off and not running and moving — quieter and slower? Use sneak when not running
+  if (moving && !p.running) speed = p.speedWalk;
+  if (moving) tryMove(p, mx * speed * dt, my * speed * dt);
+
+  // Noise emission
+  p.noise *= Math.pow(0.3, dt);
+  if (p.running) p.noise = Math.max(p.noise, 1.0);
+  else if (moving) p.noise = Math.max(p.noise, 0.35);
+  if (p.lightOn) p.noise = Math.max(p.noise, 0.15); // hum
+  // Action
+  if (input.actionPressed) {
+    input.actionPressed = false;
+    // Pick up fuse
+    let picked = false;
+    for (const f of game.fuses) {
+      if (!f.taken && Math.hypot(p.x - f.x, p.y - f.y) < 28) {
+        f.taken = true;
+        game.fusesCollected++;
+        playSound('pickup');
+        showMessage(`Предохранитель ${game.fusesCollected}/5`);
+        // First fuse pickup spawns the first note
+        if (game.notesShown < game.notes.length) {
+          setTimeout(() => showMessage(game.notes[game.notesShown++], 4), 2000);
+        }
+        // Monster gets aggressive when fuses are taken
+        if (game.fusesCollected >= 3) m.state = 'investigate';
+        if (game.fusesCollected >= 4) {
+          m.target = { x: p.x, y: p.y };
+        }
+        picked = true;
+        break;
+      }
+    }
+    // Door
+    if (!picked && game.exitDoor) {
+      const d = game.exitDoor;
+      if (Math.hypot(p.x - d.x, p.y - d.y) < 36) {
+        if (game.fusesCollected >= 5) {
+          game.win = true;
+          playSound('door');
+          showWin();
+        } else {
+          showMessage(`Дверь заперта. Нужно ${5 - game.fusesCollected} предохранителей.`);
+        }
+      }
+    }
+  }
+
+  // Sanity
+  const monsterDist = Math.hypot(p.x - m.x, p.y - m.y);
+  if (monsterDist < 200 && lineOfSight(p.x, p.y, m.x, m.y)) {
+    p.sanity = Math.max(0, p.sanity - dt * 8);
+  } else if (!p.lightOn && monsterDist < 280) {
+    p.sanity = Math.max(0, p.sanity - dt * 2);
+  } else {
+    p.sanity = Math.min(100, p.sanity + dt * 2);
+  }
+
+  // Monster
+  updateMonster(dt);
+
+  // Heartbeat intensity
+  const intensity = monsterDist < 320 ? clamp(1 - monsterDist / 320, 0, 1) : 0;
+  game.heartbeat = intensity;
+  if (intensity > 0.05) {
+    if (!heartbeatInterval || Math.abs(game.lastIntensity - intensity) > 0.15) {
+      playHeartbeat(intensity);
+      game.lastIntensity = intensity;
+    }
+  } else {
+    stopHeartbeat();
+  }
+
+  // blood overlay based on monster proximity & low sanity
+  const bloodAmt = Math.max(intensity * 0.7, (100 - p.sanity) / 100 * 0.6);
+  bloodEl.style.opacity = bloodAmt;
+
+  // Camera follows player
+  game.cameraX = clamp(p.x - CW / 2, 0, WORLD_W - CW);
+  game.cameraY = clamp(p.y - CH / 2, 0, WORLD_H - CH);
+  if (WORLD_W < CW) game.cameraX = (WORLD_W - CW) / 2;
+  if (WORLD_H < CH) game.cameraY = (WORLD_H - CH) / 2;
+
+  // shake
+  if (game.shakeT > 0) game.shakeT -= dt;
+
+  // message timer
+  if (game.msgTimer > 0) {
+    game.msgTimer -= dt;
+    if (game.msgTimer <= 0) clearMessage();
+  }
+
+  // Catch
+  if (monsterDist < p.r + m.r - 2) {
+    triggerJumpscare();
+  }
+}
+
+function updateMonster(dt) {
+  const p = game.player;
+  const m = game.monster;
+  if (m.stunned > 0) { m.stunned -= dt; return; }
+
+  // Detection: light cone vs hearing
+  const dx = p.x - m.x, dy = p.y - m.y;
+  const dToPlayer = Math.hypot(dx, dy);
+
+  let detect = false;
+  let hearDist = 60 + p.noise * 280;
+  if (p.breathHeld) hearDist *= 0.3;
+  if (dToPlayer < hearDist && lineOfSight(m.x, m.y, p.x, p.y)) {
+    detect = true;
+  }
+  // Light visible
+  if (p.lightOn && lineOfSight(m.x, m.y, p.x, p.y) && dToPlayer < 500) {
+    detect = true;
+  }
+  // Very close visual
+  if (dToPlayer < 130 && lineOfSight(m.x, m.y, p.x, p.y)) {
+    detect = true;
+  }
+
+  if (detect) {
+    m.state = 'chase';
+    m.target = { x: p.x, y: p.y };
+    m.path = []; // recompute
+    m.growl -= dt;
+    if (m.growl <= 0) {
+      playSound('growl');
+      m.growl = 1.2 + Math.random();
+    }
+  } else if (m.state === 'chase') {
+    // continue toward last known
+    if (!m.target || Math.hypot(m.target.x - m.x, m.target.y - m.y) < 18) {
+      m.state = 'investigate';
+      m.target = null;
+      m.patrolTimer = 0;
+    }
+  }
+
+  if (m.state === 'patrol' || m.state === 'investigate') {
+    m.patrolTimer -= dt;
+    if (!m.target || m.patrolTimer <= 0) {
+      m.target = randomFloorCell();
+      m.path = [];
+      m.patrolTimer = 8 + Math.random() * 6;
+    }
+  }
+
+  // Path
+  m.pathTimer -= dt;
+  if (m.target && (m.path.length === 0 || m.pathTimer <= 0)) {
+    m.path = findPath(m.x, m.y, m.target.x, m.target.y);
+    m.pathTimer = 0.5;
+  }
+
+  if (m.path.length > 0) {
+    const next = m.path[0];
+    const ddx = next.x - m.x, ddy = next.y - m.y;
+    const d = Math.hypot(ddx, ddy);
+    if (d < 8) {
+      m.path.shift();
+    } else {
+      const speed = m.state === 'chase' ? m.speed * 1.4 : m.speed * 0.7;
+      tryMove(m, (ddx / d) * speed * dt, (ddy / d) * speed * dt);
+    }
+  }
+
+  // Light stun: shining flashlight on monster
+  if (p.lightOn) {
+    const af = p.facing;
+    const ang = Math.atan2(m.y - p.y, m.x - p.x);
+    let diff = Math.abs(((ang - af + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+    if (diff < 0.45 && dToPlayer < 200 && lineOfSight(p.x, p.y, m.x, m.y)) {
+      m.stunned = Math.max(m.stunned, 0.05);
+      // push away
+      tryMove(m, -Math.cos(ang) * 30 * dt, -Math.sin(ang) * 30 * dt);
+    }
+  }
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ===== Rendering =====
+function render() {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, CW, CH);
+
+  let shakeX = 0, shakeY = 0;
+  if (game.shakeT > 0) {
+    shakeX = (Math.random() - 0.5) * 10;
+    shakeY = (Math.random() - 0.5) * 10;
+  }
+
+  ctx.save();
+  ctx.translate(-game.cameraX + shakeX, -game.cameraY + shakeY);
+
+  // Floor
+  // Draw floor only for cells in screen
+  const startX = Math.floor(game.cameraX / CELL);
+  const endX = Math.ceil((game.cameraX + CW) / CELL);
+  const startY = Math.floor(game.cameraY / CELL);
+  const endY = Math.ceil((game.cameraY + CH) / CELL);
+  for (let y = startY; y <= endY; y++) {
+    for (let x = startX; x <= endX; x++) {
+      const c = cellAt(x, y);
+      if (c === '#') {
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+        ctx.strokeStyle = '#0a0a0a';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x * CELL, y * CELL, CELL, CELL);
+        // crack
+        if ((x * 7 + y * 13) % 5 === 0) {
+          ctx.strokeStyle = '#2a2a2a';
+          ctx.beginPath();
+          ctx.moveTo(x * CELL + 8, y * CELL + 8);
+          ctx.lineTo(x * CELL + CELL - 8, y * CELL + CELL - 12);
+          ctx.stroke();
+        }
+      } else {
+        // floorboards
+        ctx.fillStyle = '#161210';
+        ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+        ctx.strokeStyle = '#0e0a08';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x * CELL, y * CELL + 16);
+        ctx.lineTo(x * CELL + CELL, y * CELL + 16);
+        ctx.moveTo(x * CELL, y * CELL + 32);
+        ctx.lineTo(x * CELL + CELL, y * CELL + 32);
+        ctx.moveTo(x * CELL, y * CELL + 48);
+        ctx.lineTo(x * CELL + CELL, y * CELL + 48);
+        ctx.stroke();
+        // stains
+        if ((x * 17 + y * 31) % 11 === 3) {
+          ctx.fillStyle = '#1a0808';
+          ctx.beginPath();
+          ctx.arc(x * CELL + 20, y * CELL + 28, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  // Fuses
+  for (const f of game.fuses) {
+    if (f.taken) continue;
+    const glow = 0.5 + Math.sin(game.time * 4 + f.x) * 0.2;
+    const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 26);
+    g.addColorStop(0, `rgba(255, 180, 40, ${0.4 * glow})`);
+    g.addColorStop(1, 'rgba(255, 180, 40, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, 26, 0, Math.PI * 2);
+    ctx.fill();
+    // fuse body
+    ctx.fillStyle = '#ddaa22';
+    ctx.fillRect(f.x - 8, f.y - 3, 16, 6);
+    ctx.fillStyle = '#5a4010';
+    ctx.fillRect(f.x - 8, f.y - 3, 4, 6);
+    ctx.fillRect(f.x + 4, f.y - 3, 4, 6);
+  }
+
+  // Exit door
+  if (game.exitDoor) {
+    const d = game.exitDoor;
+    ctx.fillStyle = '#3a1a0a';
+    ctx.fillRect(d.x - 18, d.y - 28, 36, 56);
+    ctx.fillStyle = '#5a2a18';
+    ctx.fillRect(d.x - 14, d.y - 24, 28, 48);
+    ctx.fillStyle = '#aa8844';
+    ctx.beginPath();
+    ctx.arc(d.x + 8, d.y + 2, 2, 0, Math.PI * 2);
+    ctx.fill();
+    if (game.fusesCollected < 5) {
+      ctx.strokeStyle = '#aa3030';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(d.x - 12, d.y - 18);
+      ctx.lineTo(d.x + 12, d.y + 18);
+      ctx.moveTo(d.x + 12, d.y - 18);
+      ctx.lineTo(d.x - 12, d.y + 18);
+      ctx.stroke();
+    }
+  }
+
+  // Monster - drawn first (will be obscured by darkness if outside light)
+  drawMonster();
+
+  // Player
+  drawPlayer();
+
+  ctx.restore();
+
+  // Darkness overlay with flashlight cone hole
+  renderDarkness(shakeX, shakeY);
+}
+
+function drawMonster() {
+  const m = game.monster;
+  // body
+  ctx.save();
+  ctx.translate(m.x, m.y);
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.beginPath();
+  ctx.ellipse(2, 4, m.r + 4, (m.r + 4) * 0.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // dark silhouette with subtle wobble
+  const wob = Math.sin(game.time * 6) * 1.2;
+  ctx.fillStyle = '#0a0408';
+  ctx.beginPath();
+  ctx.moveTo(0, -m.r - 4 + wob);
+  ctx.bezierCurveTo(m.r, -m.r, m.r + 2, m.r, 0, m.r + 4);
+  ctx.bezierCurveTo(-m.r - 2, m.r, -m.r, -m.r, 0, -m.r - 4 + wob);
+  ctx.fill();
+  // long arms
+  ctx.strokeStyle = '#0a0408';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  const armSwing = Math.sin(game.time * 8) * 0.4;
+  ctx.beginPath();
+  ctx.moveTo(-m.r * 0.5, 0);
+  ctx.lineTo(-m.r * 1.6, m.r * 0.8 + armSwing * 6);
+  ctx.moveTo(m.r * 0.5, 0);
+  ctx.lineTo(m.r * 1.6, m.r * 0.8 - armSwing * 6);
+  ctx.stroke();
+  // eyes only visible when in flashlight cone
+  if (monsterInPlayerLight()) {
+    ctx.fillStyle = '#ff3030';
+    ctx.beginPath();
+    ctx.arc(-4, -4, 2, 0, Math.PI * 2);
+    ctx.arc(4, -4, 2, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (game.heartbeat > 0.4) {
+    // faint glow eyes in dark
+    ctx.fillStyle = `rgba(180, 30, 30, ${game.heartbeat * 0.5})`;
+    ctx.beginPath();
+    ctx.arc(-4, -4, 1.5, 0, Math.PI * 2);
+    ctx.arc(4, -4, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function monsterInPlayerLight() {
+  const p = game.player;
+  if (!p.lightOn) return false;
+  const m = game.monster;
+  const dx = m.x - p.x, dy = m.y - p.y;
+  const d = Math.hypot(dx, dy);
+  if (d > 230) return false;
+  const ang = Math.atan2(dy, dx);
+  const diff = Math.abs(((ang - p.facing + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+  if (diff > 0.5) return false;
+  return lineOfSight(p.x, p.y, m.x, m.y);
+}
+
+function drawPlayer() {
+  const p = game.player;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  // body
+  ctx.fillStyle = '#3a3a44';
+  ctx.beginPath();
+  ctx.arc(0, 0, p.r, 0, Math.PI * 2);
+  ctx.fill();
+  // head facing
+  ctx.fillStyle = '#7a6858';
+  ctx.beginPath();
+  ctx.arc(Math.cos(p.facing) * 4, Math.sin(p.facing) * 4 - 2, p.r * 0.55, 0, Math.PI * 2);
+  ctx.fill();
+  // flashlight gizmo
+  if (p.lightOn) {
+    ctx.fillStyle = '#cccccc';
+    const fx = Math.cos(p.facing) * 12;
+    const fy = Math.sin(p.facing) * 12;
+    ctx.beginPath();
+    ctx.arc(fx, fy, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function renderDarkness(shakeX, shakeY) {
+  // Build a "darkness" overlay; cut a flashlight cone and a small radius around player
+  const p = game.player;
+  const px = p.x - game.cameraX + shakeX;
+  const py = p.y - game.cameraY + shakeY;
+
+  ctx.save();
+  // Heavy darkness
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
+  ctx.fillRect(0, 0, CW, CH);
+
+  // Use destination-out to punch holes
+  ctx.globalCompositeOperation = 'destination-out';
+
+  // small ambient halo
+  const ambientR = 60;
+  const halo = ctx.createRadialGradient(px, py, 0, px, py, ambientR);
+  halo.addColorStop(0, 'rgba(0,0,0,0.95)');
+  halo.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(px, py, ambientR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Flashlight cone
+  if (p.lightOn) {
+    const range = 280 + Math.sin(game.time * 30) * 4;
+    const ang = p.facing;
+    const half = 0.5;
+    const steps = 24;
+    // raycast for wall occlusion
+    const points = [{ x: px, y: py }];
+    for (let i = 0; i <= steps; i++) {
+      const a = ang - half + (i / steps) * half * 2;
+      const dx = Math.cos(a), dy = Math.sin(a);
+      let dist = 0;
+      const stepLen = 6;
+      while (dist < range) {
+        const wx = p.x + dx * dist;
+        const wy = p.y + dy * dist;
+        if (isWallPx(wx, wy)) break;
+        dist += stepLen;
+      }
+      points.push({ x: px + dx * dist, y: py + dy * dist });
+    }
+    const grad = ctx.createRadialGradient(px, py, 20, px, py, range);
+    grad.addColorStop(0, 'rgba(0,0,0,1)');
+    grad.addColorStop(0.7, 'rgba(0,0,0,0.95)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Warm tint over lit areas
+  if (p.lightOn) {
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.fillStyle = 'rgba(255, 220, 160, 0.07)';
+    ctx.fillRect(0, 0, CW, CH);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  ctx.restore();
+
+  // HUD updates
+  document.getElementById('bar-battery').style.width = p.battery + '%';
+  document.getElementById('bar-sanity').style.width = p.sanity + '%';
+  let fuseStr = '';
+  for (let i = 0; i < 5; i++) {
+    fuseStr += (i < game.fusesCollected ? '● ' : '◯ ');
+  }
+  document.getElementById('fuses').textContent = fuseStr + (game.fusesCollected >= 5 ? '— ВЫХОД!' : '');
+}
+
+function triggerJumpscare() {
+  if (game.dead) return;
+  game.dead = true;
+  playSound('scream');
+  jumpscareEl.classList.add('show');
+  flashEl.style.opacity = 1;
+  setTimeout(() => { flashEl.style.opacity = 0; }, 150);
+  game.shakeT = 1;
+  setTimeout(() => {
+    jumpscareEl.classList.remove('show');
+    showGameOver();
+  }, 1600);
+}
+
+function showGameOver() {
+  overlay.classList.remove('hidden');
+  overlay.innerHTML = `
+    <h1>ОН НАШЁЛ ТЕБЯ</h1>
+    <p>Ты собрал предохранителей: <b>${game.fusesCollected}/5</b></p>
+    <p>В этом доме теперь стало одной тенью больше.</p>
+    <button id="retry-btn">ПОПРОБОВАТЬ СНОВА</button>
+  `;
+  document.getElementById('retry-btn').addEventListener('click', startGame);
+}
+
+function showWin() {
+  overlay.classList.remove('hidden');
+  overlay.innerHTML = `
+    <h1 style="color:#80b080">ТЫ ВЫРВАЛСЯ</h1>
+    <p>Свет уличного фонаря резанул по глазам. Дверь захлопнулась за спиной.</p>
+    <p>Но в темноте окон ты ещё успеваешь увидеть... <b>его</b>. Оно смотрит.</p>
+    <p>И ждёт следующего.</p>
+    <button id="retry-btn">ИГРАТЬ СНОВА</button>
+  `;
+  document.getElementById('retry-btn').addEventListener('click', startGame);
+}
+
+function startGame() {
+  overlay.classList.add('hidden');
+  jumpscareEl.classList.remove('show');
+  initGame();
+  ensureAudio();
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  showMessage('Найди 5 предохранителей. Не попадись.', 4);
+}
+
+startBtn.addEventListener('click', startGame);
+
+// Game loop
+let last = 0;
+function loop(ts) {
+  if (!last) last = ts;
+  let dt = (ts - last) / 1000;
+  last = ts;
+  if (dt > 0.1) dt = 0.1;
+  if (game) update(dt);
+  if (game) render();
+  requestAnimationFrame(loop);
+}
+initGame();
+requestAnimationFrame(loop);
+
+// Service worker (optional, for offline PWA)
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+// Try lock landscape on mobile
+function tryLandscape() {
+  if (screen.orientation && screen.orientation.lock) {
+    screen.orientation.lock('landscape').catch(() => {});
+  }
+}
+startBtn.addEventListener('click', tryLandscape, { once: true });
+
+// Wake lock
+let wakeLock = null;
+async function requestWake() {
+  try {
+    if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+  } catch (e) {}
+}
+startBtn.addEventListener('click', requestWake, { once: true });
+
+})();
+</script>
+</body>
+</html>

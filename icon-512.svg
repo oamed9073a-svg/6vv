@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#000"/>
+  <circle cx="256" cy="256" r="224" fill="#0a0000"/>
+  <ellipse cx="192" cy="230" rx="32" ry="54" fill="#fff"/>
+  <ellipse cx="320" cy="230" rx="32" ry="54" fill="#fff"/>
+  <circle cx="192" cy="240" r="13" fill="#a00"/>
+  <circle cx="320" cy="240" r="13" fill="#a00"/>
+  <path d="M 144 348 Q 256 448 368 348 Q 336 380 320 358 Q 296 392 272 364 Q 240 396 220 364 Q 196 380 144 348 Z" fill="#400"/>
+  <text x="256" y="492" font-family="monospace" font-size="38" font-weight="bold" text-anchor="middle" fill="#a02020">ТЕНИ В ДОМЕ</text>
+</svg>
