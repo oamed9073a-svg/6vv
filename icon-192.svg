@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" fill="#000"/>
+  <circle cx="96" cy="96" r="84" fill="#0a0000"/>
+  <ellipse cx="72" cy="86" rx="12" ry="20" fill="#fff"/>
+  <ellipse cx="120" cy="86" rx="12" ry="20" fill="#fff"/>
+  <circle cx="72" cy="90" r="5" fill="#a00"/>
+  <circle cx="120" cy="90" r="5" fill="#a00"/>
+  <path d="M 56 130 Q 96 168 136 130 Q 124 144 118 134 Q 108 148 98 136 Q 88 150 78 134 Q 70 144 56 130 Z" fill="#400"/>
+  <text x="96" y="184" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle" fill="#a02020">ТЕНИ</text>
+</svg>

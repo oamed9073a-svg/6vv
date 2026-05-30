@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Выживание в лесу</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0a0a;
+    color: #e8e8e8;
+    font-family: 'Courier New', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 12px;
+    user-select: none;
+  }
+  h1 {
+    color: #7ab87a;
+    font-size: 22px;
+    margin-bottom: 8px;
+    letter-spacing: 2px;
+  }
+  #game-container {
+    position: relative;
+    border: 2px solid #3a5a3a;
+    box-shadow: 0 0 24px rgba(80, 160, 80, 0.25);
+  }
+  canvas {
+    display: block;
+    background: #2a3a25;
+  }
+  #hud {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    pointer-events: none;
+    font-size: 12px;
+  }
+  .stat {
+    background: rgba(0, 0, 0, 0.65);
+    padding: 4px 8px;
+    border-radius: 3px;
+    border: 1px solid #444;
+    min-width: 95px;
+  }
+  .bar {
+    width: 100%;
+    height: 5px;
+    background: #222;
+    border-radius: 2px;
+    margin-top: 2px;
+    overflow: hidden;
+  }
+  .bar > div { height: 100%; transition: width 0.2s; }
+  .health > div { background: #d04040; }
+  .hunger > div { background: #d09040; }
+  .thirst > div { background: #4090d0; }
+  .energy > div { background: #d0d040; }
+  #inventory {
+    position: absolute;
+    bottom: 8px;
+    left: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 6px 10px;
+    border-radius: 3px;
+    border: 1px solid #444;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  #info {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 6px 10px;
+    border-radius: 3px;
+    border: 1px solid #444;
+    font-size: 12px;
+    text-align: right;
+    line-height: 1.6;
+  }
+  #log {
+    position: absolute;
+    top: 70px;
+    right: 8px;
+    width: 200px;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    max-height: 140px;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .log-line { margin-bottom: 2px; }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    text-align: center;
+    padding: 20px;
+  }
+  #overlay.hidden { display: none; }
+  #overlay h2 { color: #7ab87a; font-size: 28px; margin-bottom: 16px; }
+  #overlay p { margin-bottom: 8px; max-width: 600px; line-height: 1.5; }
+  #overlay button {
+    margin-top: 18px;
+    padding: 10px 24px;
+    background: #3a6a3a;
+    color: #fff;
+    border: none;
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 3px;
+    letter-spacing: 1px;
+  }
+  #overlay button:hover { background: #4a8a4a; }
+  .key {
+    display: inline-block;
+    padding: 1px 6px;
+    background: #333;
+    border: 1px solid #666;
+    border-radius: 3px;
+    font-family: inherit;
+  }
+  #controls {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #888;
+    max-width: 880px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<h1>ВЫЖИВАНИЕ В ЛЕСУ</h1>
+<div id="game-container">
+  <canvas id="game" width="880" height="560"></canvas>
+  <div id="hud">
+    <div class="stat">❤ Здоровье<div class="bar health"><div id="bar-health"></div></div></div>
+    <div class="stat">🍖 Голод<div class="bar hunger"><div id="bar-hunger"></div></div></div>
+    <div class="stat">💧 Жажда<div class="bar thirst"><div id="bar-thirst"></div></div></div>
+    <div class="stat">⚡ Энергия<div class="bar energy"><div id="bar-energy"></div></div></div>
+  </div>
+  <div id="log"></div>
+  <div id="inventory">
+    🪵 Дерево: <span id="wood">0</span><br>
+    🪨 Камень: <span id="stone">0</span><br>
+    🍓 Ягоды: <span id="berries">0</span><br>
+    🥩 Мясо: <span id="meat">0</span><br>
+    🔥 Костёр: <span id="fire-state">нет</span>
+  </div>
+  <div id="info">
+    День <span id="day">1</span> · <span id="time-of-day">Утро</span><br>
+    Прожито: <span id="survived">0</span> мин
+  </div>
+  <div id="overlay">
+    <h2>ВЫЖИВАНИЕ В ЛЕСУ</h2>
+    <p>Ты потерялся в глухом лесу. Чтобы выжить нужно собирать ресурсы,
+    есть, пить, спать и не замёрзнуть ночью.</p>
+    <p>Берегись волков — они приходят с темнотой. Разведи костёр чтобы согреться
+    и отпугнуть зверей.</p>
+    <p style="font-size:12px;color:#aaa;">
+      <span class="key">WASD</span> или <span class="key">↑←↓→</span> — движение ·
+      <span class="key">Space</span> — действие (собрать/атаковать) ·
+      <span class="key">E</span> — есть ягоды ·
+      <span class="key">R</span> — пить из реки (стоя рядом) ·
+      <span class="key">F</span> — развести/подкинуть в костёр ·
+      <span class="key">T</span> — спать у костра
+    </p>
+    <button id="start-btn">НАЧАТЬ</button>
+  </div>
+</div>
+<div id="controls">
+  Цель — выжить как можно дольше. Каждый день волки становятся сильнее. Удачи.
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('start-btn');
+
+  const TILE = 40;
+  const COLS = Math.ceil(W / TILE);
+  const ROWS = Math.ceil(H / TILE);
+
+  const DAY_LEN = 90;
+  const NIGHT_LEN = 60;
+  const CYCLE = DAY_LEN + NIGHT_LEN;
+
+  let state;
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function randi(a, b) { return Math.floor(rand(a, b)); }
+  function dist(ax, ay, bx, by) {
+    const dx = ax - bx, dy = ay - by;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function newState() {
+    const trees = [];
+    const stones = [];
+    const bushes = [];
+    const wolves = [];
+
+    for (let i = 0; i < 65; i++) {
+      trees.push({
+        x: rand(20, W - 20), y: rand(20, H - 20),
+        hp: 3, r: 14, type: 'tree', wobble: 0,
+      });
+    }
+    for (let i = 0; i < 18; i++) {
+      stones.push({
+        x: rand(20, W - 20), y: rand(20, H - 20),
+        hp: 4, r: 12, type: 'stone', wobble: 0,
+      });
+    }
+    for (let i = 0; i < 14; i++) {
+      bushes.push({
+        x: rand(20, W - 20), y: rand(20, H - 20),
+        berries: randi(2, 5), r: 11, type: 'bush', wobble: 0,
+        regrow: 0,
+      });
+    }
+
+    const river = { y: H * 0.78, amp: 14, w: 28 };
+
+    return {
+      player: {
+        x: W / 2, y: H / 2,
+        r: 11, speed: 105,
+        health: 100, hunger: 100, thirst: 100, energy: 100,
+        facing: 0, hitFlash: 0, swing: 0,
+        sleeping: false,
+      },
+      inv: { wood: 0, stone: 0, berries: 0, meat: 0 },
+      campfire: null, // {x, y, fuel, lit}
+      trees, stones, bushes, wolves,
+      river,
+      arrows: [], // not used; reserved
+      bloodSpots: [],
+      time: 0,
+      day: 1,
+      survivedSeconds: 0,
+      logs: [],
+      gameOver: false,
+      lastWolfSpawn: 0,
+      keys: {},
+    };
+  }
+
+  function isNight() {
+    const t = state.time % CYCLE;
+    return t >= DAY_LEN;
+  }
+
+  function timeOfDayLabel() {
+    const t = state.time % CYCLE;
+    if (t < DAY_LEN * 0.25) return 'Утро';
+    if (t < DAY_LEN * 0.7) return 'День';
+    if (t < DAY_LEN) return 'Вечер';
+    if (t < DAY_LEN + NIGHT_LEN * 0.5) return 'Ночь';
+    return 'Поздняя ночь';
+  }
+
+  function darkness() {
+    const t = state.time % CYCLE;
+    if (t < DAY_LEN * 0.7) return 0;
+    if (t < DAY_LEN) return (t - DAY_LEN * 0.7) / (DAY_LEN * 0.3) * 0.7;
+    if (t < DAY_LEN + NIGHT_LEN * 0.5) {
+      return 0.7 + (t - DAY_LEN) / (NIGHT_LEN * 0.5) * 0.15;
+    }
+    if (t < CYCLE - 5) return 0.85;
+    return 0.85 - (t - (CYCLE - 5)) / 5 * 0.85;
+  }
+
+  function log(text) {
+    state.logs.unshift({ text, t: 0 });
+    if (state.logs.length > 6) state.logs.length = 6;
+  }
+
+  function near(a, b, range) {
+    return dist(a.x, a.y, b.x, b.y) <= range;
+  }
+
+  function nearestOf(arr, x, y, range) {
+    let best = null, bestD = range;
+    for (const o of arr) {
+      const d = dist(x, y, o.x, o.y);
+      if (d < bestD) { bestD = d; best = o; }
+    }
+    return best;
+  }
+
+  function riverY(x) {
+    return state.river.y + Math.sin(x * 0.02) * state.river.amp;
+  }
+  function nearRiver(x, y) {
+    const ry = riverY(x);
+    return Math.abs(y - ry) < state.river.w / 2 + 16;
+  }
+  function inRiver(x, y) {
+    const ry = riverY(x);
+    return Math.abs(y - ry) < state.river.w / 2;
+  }
+
+  function performAction() {
+    const p = state.player;
+    if (p.sleeping) { p.sleeping = false; log('Ты проснулся'); return; }
+    p.swing = 0.25;
+
+    // Look ahead in facing direction
+    const ax = p.x + Math.cos(p.facing) * 22;
+    const ay = p.y + Math.sin(p.facing) * 22;
+
+    // Wolf nearby in front -> attack
+    const wolf = nearestOf(state.wolves, ax, ay, 30);
+    if (wolf) {
+      wolf.hp -= 1;
+      wolf.kb = { x: Math.cos(p.facing) * 30, y: Math.sin(p.facing) * 30 };
+      if (wolf.hp <= 0) {
+        state.inv.meat += 2;
+        state.bloodSpots.push({ x: wolf.x, y: wolf.y, t: 0 });
+        state.wolves = state.wolves.filter(w => w !== wolf);
+        log('Волк убит! +2 мяса');
+      }
+      return;
+    }
+
+    const tree = nearestOf(state.trees, ax, ay, 28);
+    if (tree) {
+      tree.hp -= 1; tree.wobble = 0.3;
+      if (tree.hp <= 0) {
+        state.inv.wood += randi(2, 4);
+        state.trees = state.trees.filter(t => t !== tree);
+        log('Срубил дерево');
+      }
+      return;
+    }
+    const st = nearestOf(state.stones, ax, ay, 26);
+    if (st) {
+      st.hp -= 1; st.wobble = 0.3;
+      if (st.hp <= 0) {
+        state.inv.stone += randi(1, 3);
+        state.stones = state.stones.filter(s => s !== st);
+        log('Добыл камень');
+      }
+      return;
+    }
+    const bush = nearestOf(state.bushes, ax, ay, 26);
+    if (bush && bush.berries > 0) {
+      state.inv.berries += bush.berries;
+      log('Собрал ягод: ' + bush.berries);
+      bush.berries = 0;
+      bush.regrow = 60;
+      return;
+    }
+  }
+
+  function eat() {
+    if (state.inv.meat > 0 && state.campfire && state.campfire.lit) {
+      state.inv.meat -= 1;
+      state.player.hunger = Math.min(100, state.player.hunger + 35);
+      state.player.health = Math.min(100, state.player.health + 8);
+      log('Жареное мясо — сытно!');
+      return;
+    }
+    if (state.inv.berries > 0) {
+      state.inv.berries -= 1;
+      state.player.hunger = Math.min(100, state.player.hunger + 10);
+      state.player.thirst = Math.min(100, state.player.thirst + 3);
+      log('Съел ягоду');
+      return;
+    }
+    if (state.inv.meat > 0) {
+      log('Нужен костёр чтобы пожарить мясо');
+      return;
+    }
+    log('Нечего есть');
+  }
+
+  function drink() {
+    const p = state.player;
+    if (nearRiver(p.x, p.y)) {
+      p.thirst = Math.min(100, p.thirst + 30);
+      log('Освежающая вода');
+    } else {
+      log('Нужно подойти к реке');
+    }
+  }
+
+  function campfireAction() {
+    const p = state.player;
+    if (!state.campfire) {
+      if (state.inv.wood >= 3 && state.inv.stone >= 2) {
+        state.inv.wood -= 3;
+        state.inv.stone -= 2;
+        state.campfire = { x: p.x, y: p.y - 8, fuel: 40, lit: true };
+        log('Костёр разведён');
+      } else {
+        log('Нужно 3 дерева и 2 камня');
+      }
+    } else {
+      if (state.inv.wood > 0) {
+        state.inv.wood -= 1;
+        state.campfire.fuel = Math.min(120, state.campfire.fuel + 25);
+        state.campfire.lit = true;
+        log('Подкинул в костёр');
+      } else {
+        log('Нет дерева для костра');
+      }
+    }
+  }
+
+  function sleep() {
+    if (!state.campfire || !state.campfire.lit) {
+      log('Спать опасно без костра'); return;
+    }
+    const p = state.player;
+    if (dist(p.x, p.y, state.campfire.x, state.campfire.y) > 60) {
+      log('Иди ближе к костру'); return;
+    }
+    p.sleeping = true;
+    log('Ты заснул...');
+  }
+
+  function spawnWolf() {
+    const side = randi(0, 4);
+    let x, y;
+    if (side === 0) { x = -20; y = rand(0, H); }
+    else if (side === 1) { x = W + 20; y = rand(0, H); }
+    else if (side === 2) { x = rand(0, W); y = -20; }
+    else { x = rand(0, W); y = H + 20; }
+
+    state.wolves.push({
+      x, y, r: 12, speed: 70 + state.day * 4,
+      hp: 2 + Math.floor(state.day / 2),
+      cool: 0,
+    });
+  }
+
+  function update(dt) {
+    if (state.gameOver) return;
+    const p = state.player;
+
+    state.time += dt;
+    state.survivedSeconds += dt;
+    const dayNum = Math.floor(state.time / CYCLE) + 1;
+    if (dayNum !== state.day) {
+      state.day = dayNum;
+      log('Настал день ' + state.day);
+    }
+
+    // Sleeping speeds time and recovers energy
+    if (p.sleeping) {
+      state.time += dt * 4;
+      p.energy = Math.min(100, p.energy + dt * 25);
+      p.health = Math.min(100, p.health + dt * 3);
+      if (p.energy >= 99) { p.sleeping = false; log('Хорошо отдохнул'); }
+    }
+
+    // Movement
+    let dx = 0, dy = 0;
+    if (!p.sleeping) {
+      if (state.keys['w'] || state.keys['arrowup']) dy -= 1;
+      if (state.keys['s'] || state.keys['arrowdown']) dy += 1;
+      if (state.keys['a'] || state.keys['arrowleft']) dx -= 1;
+      if (state.keys['d'] || state.keys['arrowright']) dx += 1;
+    }
+    if (dx || dy) {
+      const l = Math.hypot(dx, dy);
+      dx /= l; dy /= l;
+      p.facing = Math.atan2(dy, dx);
+      let speed = p.speed * (p.energy > 0 ? 1 : 0.5);
+      if (inRiver(p.x, p.y)) speed *= 0.5;
+      p.x += dx * speed * dt;
+      p.y += dy * speed * dt;
+      p.energy = Math.max(0, p.energy - dt * 1.2);
+    } else if (!p.sleeping) {
+      p.energy = Math.min(100, p.energy + dt * 0.3);
+    }
+    p.x = Math.max(p.r, Math.min(W - p.r, p.x));
+    p.y = Math.max(p.r, Math.min(H - p.r, p.y));
+
+    // Stats decay
+    p.hunger = Math.max(0, p.hunger - dt * 0.9);
+    p.thirst = Math.max(0, p.thirst - dt * 1.2);
+
+    // Hunger/thirst damage
+    if (p.hunger <= 0) p.health -= dt * 2;
+    if (p.thirst <= 0) p.health -= dt * 3;
+
+    // Night cold without campfire
+    if (isNight()) {
+      const nearFire = state.campfire && state.campfire.lit &&
+        dist(p.x, p.y, state.campfire.x, state.campfire.y) < 80;
+      if (!nearFire) p.health -= dt * 1.2;
+    }
+
+    if (p.swing > 0) p.swing -= dt;
+    if (p.hitFlash > 0) p.hitFlash -= dt;
+
+    // Resource regrow
+    for (const b of state.bushes) {
+      if (b.regrow > 0) {
+        b.regrow -= dt;
+        if (b.regrow <= 0) b.berries = randi(2, 5);
+      }
+      if (b.wobble > 0) b.wobble -= dt;
+    }
+    for (const t of state.trees) if (t.wobble > 0) t.wobble -= dt;
+    for (const s of state.stones) if (s.wobble > 0) s.wobble -= dt;
+
+    // Campfire
+    if (state.campfire) {
+      state.campfire.fuel -= dt;
+      if (state.campfire.fuel <= 0) {
+        state.campfire.lit = false;
+        state.campfire.fuel = 0;
+      }
+    }
+
+    // Spawn wolves at night
+    if (isNight()) {
+      state.lastWolfSpawn += dt;
+      const interval = Math.max(5, 14 - state.day);
+      const maxWolves = Math.min(2 + state.day, 8);
+      if (state.lastWolfSpawn > interval && state.wolves.length < maxWolves) {
+        spawnWolf();
+        state.lastWolfSpawn = 0;
+      }
+    } else {
+      // Daytime wolves retreat
+      for (const w of state.wolves) {
+        if (Math.random() < dt * 0.3) {
+          w.flee = true;
+        }
+      }
+    }
+
+    // Wolves AI
+    for (const w of state.wolves) {
+      if (w.kb) {
+        w.x += w.kb.x * dt * 6;
+        w.y += w.kb.y * dt * 6;
+        w.kb.x *= 0.7; w.kb.y *= 0.7;
+        if (Math.abs(w.kb.x) < 1 && Math.abs(w.kb.y) < 1) delete w.kb;
+      }
+      const ddx = p.x - w.x, ddy = p.y - w.y;
+      const d = Math.hypot(ddx, ddy) || 1;
+      let mult = 1;
+      if (w.flee) mult = -0.7;
+      // Fire scares wolves
+      if (state.campfire && state.campfire.lit) {
+        const fd = dist(w.x, w.y, state.campfire.x, state.campfire.y);
+        if (fd < 90) mult = -1.2;
+      }
+      w.x += (ddx / d) * w.speed * dt * mult;
+      w.y += (ddy / d) * w.speed * dt * mult;
+
+      if (w.cool > 0) w.cool -= dt;
+      if (d < 22 && w.cool <= 0) {
+        p.health -= 8 + state.day;
+        p.hitFlash = 0.3;
+        w.cool = 1.0;
+        log('Волк укусил!');
+      }
+    }
+
+    // Despawn fleeing wolves off-map
+    state.wolves = state.wolves.filter(w =>
+      w.hp > 0 && w.x > -60 && w.x < W + 60 && w.y > -60 && w.y < H + 60
+    );
+
+    // Logs fade
+    for (const l of state.logs) l.t += dt;
+
+    // Blood fade
+    for (const b of state.bloodSpots) b.t += dt;
+    state.bloodSpots = state.bloodSpots.filter(b => b.t < 20);
+
+    // Death
+    if (p.health <= 0) {
+      state.gameOver = true;
+      showGameOver();
+    }
+  }
+
+  function showGameOver() {
+    overlay.classList.remove('hidden');
+    const mins = Math.floor(state.survivedSeconds / 60);
+    const secs = Math.floor(state.survivedSeconds % 60);
+    overlay.innerHTML = `
+      <h2>ТЫ ПОГИБ</h2>
+      <p>Дней прожито: <b>${state.day}</b></p>
+      <p>Время выживания: <b>${mins} мин ${secs} сек</b></p>
+      <p style="color:#888;font-size:12px;">${deathReason()}</p>
+      <button id="restart-btn">ПОПРОБОВАТЬ СНОВА</button>
+    `;
+    document.getElementById('restart-btn').addEventListener('click', () => {
+      startGame();
+    });
+  }
+
+  function deathReason() {
+    const p = state.player;
+    if (p.hunger <= 0) return 'Голод свёл тебя в могилу.';
+    if (p.thirst <= 0) return 'Жажда оказалась смертельной.';
+    if (state.wolves.length > 0) return 'Волки разорвали тебя на части.';
+    return 'Лес поглотил тебя.';
+  }
+
+  // === RENDERING ===
+
+  function drawGround() {
+    // base
+    ctx.fillStyle = '#2a3a25';
+    ctx.fillRect(0, 0, W, H);
+    // grass texture: pseudo-random tufts
+    ctx.fillStyle = '#324028';
+    for (let i = 0; i < 250; i++) {
+      const x = (i * 137) % W;
+      const y = (i * 91 + 41) % H;
+      ctx.fillRect(x, y, 2, 2);
+    }
+    ctx.fillStyle = '#3b4a30';
+    for (let i = 0; i < 150; i++) {
+      const x = (i * 211 + 13) % W;
+      const y = (i * 73 + 17) % H;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+
+  function drawRiver() {
+    const r = state.river;
+    ctx.fillStyle = '#3a6480';
+    ctx.beginPath();
+    ctx.moveTo(0, riverY(0) - r.w / 2);
+    for (let x = 0; x <= W; x += 8) {
+      ctx.lineTo(x, riverY(x) - r.w / 2);
+    }
+    for (let x = W; x >= 0; x -= 8) {
+      ctx.lineTo(x, riverY(x) + r.w / 2);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // shimmer
+    ctx.strokeStyle = 'rgba(180, 220, 240, 0.4)';
+    ctx.lineWidth = 1;
+    const phase = state.time * 2;
+    for (let x = 0; x <= W; x += 4) {
+      const y = riverY(x) + Math.sin(x * 0.1 + phase) * 3;
+      if (x === 0) { ctx.beginPath(); ctx.moveTo(x, y); }
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  function drawTree(t) {
+    const wob = Math.sin(state.time * 8) * t.wobble * 3;
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(t.x + 4, t.y + 6, t.r, t.r * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // trunk
+    ctx.fillStyle = '#5a3a20';
+    ctx.fillRect(t.x - 3 + wob, t.y - 4, 6, 14);
+    // foliage
+    ctx.fillStyle = '#2d5a2d';
+    ctx.beginPath();
+    ctx.arc(t.x + wob, t.y - 6, t.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#3a7040';
+    ctx.beginPath();
+    ctx.arc(t.x - 3 + wob, t.y - 9, t.r * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawStone(s) {
+    const wob = Math.sin(state.time * 10) * s.wobble * 2;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(s.x + 2 + wob, s.y + 4, s.r, s.r * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#777';
+    ctx.beginPath();
+    ctx.arc(s.x + wob, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#999';
+    ctx.beginPath();
+    ctx.arc(s.x - 3 + wob, s.y - 3, s.r * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawBush(b) {
+    const wob = Math.sin(state.time * 8) * b.wobble * 2;
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    ctx.ellipse(b.x + 2, b.y + 4, b.r, b.r * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = b.berries > 0 ? '#2d5a35' : '#3a4a30';
+    ctx.beginPath();
+    ctx.arc(b.x + wob, b.y, b.r, 0, Math.PI * 2);
+    ctx.fill();
+    if (b.berries > 0) {
+      ctx.fillStyle = '#c84050';
+      for (let i = 0; i < b.berries; i++) {
+        const a = (i / 5) * Math.PI * 2 + b.x * 0.01;
+        ctx.beginPath();
+        ctx.arc(b.x + Math.cos(a) * 6 + wob, b.y + Math.sin(a) * 6, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawWolf(w) {
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(w.x + 2, w.y + 5, w.r, w.r * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // body
+    ctx.fillStyle = '#3a3a3a';
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, w.r, 0, Math.PI * 2);
+    ctx.fill();
+    // head facing player
+    const a = Math.atan2(state.player.y - w.y, state.player.x - w.x);
+    ctx.fillStyle = '#4a4a4a';
+    ctx.beginPath();
+    ctx.arc(w.x + Math.cos(a) * 8, w.y + Math.sin(a) * 8, w.r * 0.6, 0, Math.PI * 2);
+    ctx.fill();
+    // eyes glowing at night
+    if (isNight()) {
+      ctx.fillStyle = '#ffe066';
+      ctx.beginPath();
+      ctx.arc(w.x + Math.cos(a) * 10 + Math.cos(a + 0.4) * 2, w.y + Math.sin(a) * 10 + Math.sin(a + 0.4) * 2, 1.5, 0, Math.PI * 2);
+      ctx.arc(w.x + Math.cos(a) * 10 - Math.cos(a + 0.4) * 2, w.y + Math.sin(a) * 10 - Math.sin(a + 0.4) * 2, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawPlayer() {
+    const p = state.player;
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(p.x + 2, p.y + 6, p.r, p.r * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // body
+    ctx.fillStyle = p.hitFlash > 0 ? '#ff5050' : '#c8a070';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fill();
+    // head
+    ctx.fillStyle = '#e0c080';
+    ctx.beginPath();
+    ctx.arc(p.x + Math.cos(p.facing) * 4, p.y + Math.sin(p.facing) * 4 - 2, p.r * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+    // facing indicator (tool)
+    const tx = p.x + Math.cos(p.facing) * (16 + (p.swing > 0 ? 6 : 0));
+    const ty = p.y + Math.sin(p.facing) * (16 + (p.swing > 0 ? 6 : 0));
+    ctx.strokeStyle = '#a06030';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(p.x + Math.cos(p.facing) * 8, p.y + Math.sin(p.facing) * 8);
+    ctx.lineTo(tx, ty);
+    ctx.stroke();
+    if (p.sleeping) {
+      ctx.fillStyle = '#fff';
+      ctx.font = '14px monospace';
+      ctx.fillText('Zzz', p.x + 10, p.y - 14);
+    }
+  }
+
+  function drawCampfire() {
+    const c = state.campfire;
+    if (!c) return;
+    // stones
+    ctx.fillStyle = '#666';
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(c.x + Math.cos(a) * 11, c.y + Math.sin(a) * 11, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // logs
+    ctx.fillStyle = '#5a3a20';
+    ctx.fillRect(c.x - 6, c.y - 2, 12, 4);
+    ctx.fillRect(c.x - 2, c.y - 6, 4, 12);
+
+    if (c.lit) {
+      // flames
+      const f = Math.sin(state.time * 12) * 2;
+      ctx.fillStyle = '#ff7020';
+      ctx.beginPath();
+      ctx.moveTo(c.x - 6, c.y);
+      ctx.quadraticCurveTo(c.x - 3, c.y - 16 - f, c.x, c.y - 14);
+      ctx.quadraticCurveTo(c.x + 3, c.y - 18 - f, c.x + 6, c.y);
+      ctx.fill();
+      ctx.fillStyle = '#ffd040';
+      ctx.beginPath();
+      ctx.moveTo(c.x - 3, c.y);
+      ctx.quadraticCurveTo(c.x, c.y - 12 + f, c.x + 3, c.y);
+      ctx.fill();
+
+      // light circle
+      const grad = ctx.createRadialGradient(c.x, c.y, 10, c.x, c.y, 100);
+      grad.addColorStop(0, 'rgba(255, 180, 80, 0.35)');
+      grad.addColorStop(1, 'rgba(255, 180, 80, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 100, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawDarkness() {
+    const d = darkness();
+    if (d <= 0) return;
+    ctx.fillStyle = `rgba(5, 10, 30, ${d})`;
+    ctx.fillRect(0, 0, W, H);
+
+    // Light around player at night
+    if (d > 0.5) {
+      const p = state.player;
+      ctx.globalCompositeOperation = 'destination-out';
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 70);
+      grad.addColorStop(0, 'rgba(0,0,0,0.4)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 70, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (state.campfire && state.campfire.lit) {
+        const c = state.campfire;
+        const grad2 = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 130);
+        grad2.addColorStop(0, 'rgba(0,0,0,0.8)');
+        grad2.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grad2;
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, 130, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+  }
+
+  function render() {
+    drawGround();
+    drawRiver();
+
+    // blood
+    for (const b of state.bloodSpots) {
+      ctx.fillStyle = `rgba(120, 20, 20, ${Math.max(0, 0.5 - b.t / 40)})`;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Sort by Y for fake depth
+    const drawables = [];
+    for (const t of state.trees) drawables.push({ y: t.y, fn: () => drawTree(t) });
+    for (const s of state.stones) drawables.push({ y: s.y, fn: () => drawStone(s) });
+    for (const b of state.bushes) drawables.push({ y: b.y, fn: () => drawBush(b) });
+    for (const w of state.wolves) drawables.push({ y: w.y, fn: () => drawWolf(w) });
+    drawables.push({ y: state.player.y, fn: drawPlayer });
+    if (state.campfire) drawables.push({ y: state.campfire.y, fn: drawCampfire });
+    drawables.sort((a, b) => a.y - b.y);
+    for (const d of drawables) d.fn();
+
+    drawDarkness();
+
+    // update HUD elements
+    const p = state.player;
+    document.getElementById('bar-health').style.width = p.health + '%';
+    document.getElementById('bar-hunger').style.width = p.hunger + '%';
+    document.getElementById('bar-thirst').style.width = p.thirst + '%';
+    document.getElementById('bar-energy').style.width = p.energy + '%';
+    document.getElementById('wood').textContent = state.inv.wood;
+    document.getElementById('stone').textContent = state.inv.stone;
+    document.getElementById('berries').textContent = state.inv.berries;
+    document.getElementById('meat').textContent = state.inv.meat;
+    document.getElementById('fire-state').textContent =
+      state.campfire ? (state.campfire.lit ? 'горит (' + Math.ceil(state.campfire.fuel) + ')' : 'погас') : 'нет';
+    document.getElementById('day').textContent = state.day;
+    document.getElementById('time-of-day').textContent = timeOfDayLabel();
+    document.getElementById('survived').textContent = Math.floor(state.survivedSeconds / 60);
+
+    // logs
+    const logEl = document.getElementById('log');
+    logEl.innerHTML = state.logs
+      .filter(l => l.t < 6)
+      .map(l => `<div class="log-line" style="opacity:${Math.max(0.2, 1 - l.t / 6)}">${l.text}</div>`)
+      .join('');
+  }
+
+  // Game loop
+  let lastT = 0;
+  function loop(ts) {
+    if (!lastT) lastT = ts;
+    let dt = (ts - lastT) / 1000;
+    lastT = ts;
+    if (dt > 0.1) dt = 0.1;
+    const paused = !overlay.classList.contains('hidden') || state.gameOver;
+    if (!paused) update(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  function startGame() {
+    state = newState();
+    overlay.classList.add('hidden');
+    log('Ты очнулся в лесу...');
+  }
+
+  // Input
+  window.addEventListener('keydown', (e) => {
+    if (!state) return;
+    const k = e.key.toLowerCase();
+    state.keys[k] = true;
+    if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k) ||
+        e.key === ' ') e.preventDefault();
+    if (state.gameOver) return;
+    if (!overlay.classList.contains('hidden')) return;
+    if (k === ' ') performAction();
+    else if (k === 'e') eat();
+    else if (k === 'r') drink();
+    else if (k === 'f') campfireAction();
+    else if (k === 't') sleep();
+  });
+  window.addEventListener('keyup', (e) => {
+    if (!state) return;
+    state.keys[e.key.toLowerCase()] = false;
+  });
+
+  startBtn.addEventListener('click', startGame);
+
+  // Init initial render even before start
+  state = newState();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
