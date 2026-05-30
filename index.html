@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ШЁПОТ В ТЕМНОТЕ — A Horror Game</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    font-family: "Courier New", monospace;
+    color: #c8c8c8; cursor: default;
+    user-select: none;
+  }
+  #game { display: block; background: #000; width: 100vw; height: 100vh; }
+
+  /* ---- Overlays ---- */
+  .screen {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center; z-index: 50;
+    background: radial-gradient(circle at 50% 40%, #0a0a0a 0%, #000 80%);
+  }
+  .hidden { display: none !important; }
+
+  h1.title {
+    font-size: clamp(28px, 6vw, 72px);
+    letter-spacing: 0.25em;
+    color: #7a0000;
+    text-shadow: 0 0 18px #b80000, 0 0 4px #fff;
+    animation: flicker 4s infinite;
+    margin-bottom: 8px;
+  }
+  .subtitle { color: #555; letter-spacing: 0.3em; font-size: 13px; margin-bottom: 48px; }
+
+  @keyframes flicker {
+    0%,19%,21%,23%,25%,54%,56%,100% { opacity: 1; }
+    20%,24%,55% { opacity: 0.35; }
+  }
+
+  .btn {
+    background: transparent; color: #b0b0b0;
+    border: 1px solid #444; padding: 14px 42px;
+    font-family: inherit; font-size: 17px; letter-spacing: 0.2em;
+    cursor: pointer; margin: 8px; transition: all .2s; text-transform: uppercase;
+  }
+  .btn:hover { background: #1a0000; color: #ff3b3b; border-color: #7a0000; box-shadow: 0 0 14px #4d0000; }
+
+  .panel {
+    max-width: 640px; line-height: 1.7; color: #9a9a9a;
+    font-size: 15px; padding: 0 24px;
+  }
+  .panel .key { color: #d8a000; font-weight: bold; }
+  .panel h2 { color: #b80000; letter-spacing: 0.2em; margin-bottom: 22px; font-size: 24px; }
+
+  /* ---- HUD ---- */
+  #hud {
+    position: fixed; inset: 0; pointer-events: none; z-index: 20;
+  }
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none; z-index: 15;
+    box-shadow: inset 0 0 220px 90px rgba(0,0,0,0.95);
+  }
+  #bloodOverlay {
+    position: fixed; inset: 0; pointer-events: none; z-index: 16;
+    background: radial-gradient(circle, transparent 55%, rgba(80,0,0,0.55) 100%);
+    opacity: 0; transition: opacity .3s;
+  }
+  .hudbar { position: absolute; left: 22px; }
+  #hudTop { top: 18px; left: 22px; font-size: 14px; letter-spacing: 0.15em; }
+  #hudTop span { color: #d8a000; }
+  .meter {
+    position: absolute; width: 200px; height: 14px;
+    border: 1px solid #333; background: #0a0a0a;
+  }
+  .meter > div { height: 100%; transition: width .25s, background .25s; }
+  #battWrap { bottom: 26px; left: 22px; }
+  #sanWrap { bottom: 26px; left: 240px; }
+  .meterLabel { position: absolute; font-size: 11px; color: #666; top: -16px; left: 0; letter-spacing: 0.2em; }
+  #battFill { background: #2f8f2f; }
+  #sanFill { background: #6a3aa0; }
+
+  #message {
+    position: absolute; bottom: 22%; left: 50%; transform: translateX(-50%);
+    color: #cfcfcf; font-size: 16px; letter-spacing: 0.1em;
+    text-shadow: 0 0 8px #000; opacity: 0; transition: opacity .4s;
+    background: rgba(0,0,0,0.45); padding: 8px 18px; max-width: 70vw; text-align: center;
+  }
+  #crosshair {
+    position: absolute; top: 50%; left: 50%; width: 4px; height: 4px;
+    margin: -2px 0 0 -2px; background: rgba(200,200,200,0.5); border-radius: 50%;
+  }
+  #interactHint {
+    position: absolute; top: 56%; left: 50%; transform: translateX(-50%);
+    color: #d8a000; font-size: 15px; letter-spacing: 0.1em; opacity: 0; transition: opacity .15s;
+    text-shadow: 0 0 6px #000;
+  }
+
+  /* ---- Jumpscare ---- */
+  #jumpscare {
+    position: fixed; inset: 0; z-index: 100; background: #000;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #jumpscare canvas { width: 100vw; height: 100vh; }
+
+  /* ---- Note reader ---- */
+  #noteScreen { z-index: 60; background: rgba(0,0,0,0.92); }
+  #noteText {
+    max-width: 560px; color: #d9cbb0; font-size: 17px; line-height: 1.9;
+    background: #1a1712; padding: 40px; border: 1px solid #3a3228;
+    box-shadow: 0 0 40px #000; font-style: italic;
+  }
+  .flickerLight { animation: flicker 6s infinite; }
+  #fade {
+    position: fixed; inset: 0; background: #000; z-index: 90;
+    pointer-events: none; opacity: 0; transition: opacity 1s;
+  }
+  .corner { position: fixed; bottom: 8px; font-size: 11px; color: #2a2a2a; z-index: 21; }
+  .corner.r { right: 10px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- In-game HUD -->
+<div id="hud" class="hidden">
+  <div id="vignette"></div>
+  <div id="hudTop">ПРЕДОХРАНИТЕЛИ: <span id="fuseCount">0</span> / 4</div>
+  <div id="crosshair"></div>
+  <div id="interactHint"></div>
+  <div id="battWrap" class="meter"><div class="meterLabel">ФОНАРЬ</div><div id="battFill"></div></div>
+  <div id="sanWrap" class="meter"><div class="meterLabel">РАССУДОК</div><div id="sanFill"></div></div>
+  <div id="message"></div>
+</div>
+<div id="bloodOverlay"></div>
+
+<!-- Main menu -->
+<div id="menu" class="screen">
+  <h1 class="title">ШЁПОТ В&nbsp;ТЕМНОТЕ</h1>
+  <div class="subtitle">WHISPERS IN THE DARK</div>
+  <button class="btn" id="startBtn">Начать</button>
+  <button class="btn" id="howBtn">Управление</button>
+  <div class="corner">v1.0 — лучше в наушниках, в тёмной комнате</div>
+</div>
+
+<!-- Instructions -->
+<div id="howto" class="screen hidden">
+  <div class="panel">
+    <h2>КАК ВЫЖИТЬ</h2>
+    <p>Ты очнулся в заброшенной лечебнице. Свет погас. Ты здесь не один.</p>
+    <br>
+    <p><span class="key">W A S D</span> — движение &nbsp;·&nbsp; <span class="key">МЫШЬ</span> — осмотреться</p>
+    <p><span class="key">SHIFT</span> — бежать &nbsp;·&nbsp; <span class="key">E</span> — взаимодействовать</p>
+    <p><span class="key">F</span> — фонарь (вкл/выкл) &nbsp;·&nbsp; <span class="key">ESC</span> — пауза</p>
+    <br>
+    <p>Найди <span class="key">4 предохранителя</span> и вставь их в щит, чтобы открыть выход.</p>
+    <p>Фонарь жрёт батарею — выключай его, когда можешь.</p>
+    <p>В темноте тает <span class="key">рассудок</span>. ОНО приходит на страх.</p>
+    <p>Не свети на НЕГО слишком долго. Не дай себя поймать.</p>
+    <br>
+    <button class="btn" id="backBtn">Назад</button>
+  </div>
+</div>
+
+<!-- Pause -->
+<div id="pause" class="screen hidden">
+  <h1 class="title" style="font-size:48px;">ПАУЗА</h1>
+  <button class="btn" id="resumeBtn">Продолжить</button>
+  <button class="btn" id="quitBtn">В меню</button>
+</div>
+
+<!-- Note reader -->
+<div id="noteScreen" class="screen hidden">
+  <div id="noteText" class="flickerLight"></div>
+  <button class="btn" id="closeNote" style="margin-top:26px;">Закрыть [E]</button>
+</div>
+
+<!-- Win -->
+<div id="win" class="screen hidden">
+  <h1 class="title" style="color:#2f8f2f;text-shadow:0 0 18px #1d6b1d;">ТЫ ВЫБРАЛСЯ</h1>
+  <div class="panel">
+    <p id="winText">Холодный воздух улицы обжигает лёгкие. Позади — только тьма и тишина.<br>Но шёпот всё ещё звучит у тебя в голове...</p>
+    <br><button class="btn" id="winMenu">В меню</button>
+  </div>
+</div>
+
+<!-- Lose -->
+<div id="lose" class="screen hidden">
+  <h1 class="title">ТЫ МЁРТВ</h1>
+  <div class="panel"><p id="loseText"></p>
+    <br><button class="btn" id="retryBtn">Снова</button>
+    <button class="btn" id="loseMenu">В меню</button>
+  </div>
+</div>
+
+<div id="jumpscare" class="hidden"><canvas id="jsCanvas"></canvas></div>
+<div id="fade"></div>
+
+<script>
+"use strict";
+/* ============================================================
+   ШЁПОТ В ТЕМНОТЕ — pure-JS raycasting horror game
+   No external assets. Audio is procedurally synthesised.
+   ============================================================ */
+
+// ---------- Canvas ----------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0;
+function resize() {
+  W = canvas.width = Math.floor(window.innerWidth);
+  H = canvas.height = Math.floor(window.innerHeight);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- Map ----------
+// 1 = wall, 0 = floor. Border must be solid.
+// 'S' spawn handled via PLAYER_START. The grid is a sprawling asylum maze.
+const MAP = [
+ "1111111111111111111111111111",
+ "1000000010000000100000000001",
+ "1011110010111110101111111101",
+ "1010000000100010001000000101",
+ "1010111110101010111011110101",
+ "1010100000101010000010010101",
+ "1000101111101011110010010001",
+ "1110101000001000010010011101",
+ "1000101011111011010010000001",
+ "1011101010000010010011111101",
+ "1010001010111110010000000101",
+ "1010110010100000011111110101",
+ "1000010010101111010000010001",
+ "1111010000101000010110010111",
+ "1000010110001010010100000001",
+ "1010110100111010010101111101",
+ "1010000100100010000101000101",
+ "1011111100101111111101010101",
+ "1000000000100000000001010001",
+ "1011111011111111111011010111",
+ "1000001000000000001000010001",
+ "1110101111111110101111110101",
+ "1000100000000010100000000101",
+ "1010111111110010111111010101",
+ "1010000000010000000001010001",
+ "1011111111010111111101011101",
+ "1000000000000100000000000001",
+ "1111111111111111111111111111",
+];
+const MAP_H = MAP.length;
+const MAP_W = MAP[0].length;
+function cell(x, y) {
+  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return 1;
+  return MAP[y|0][x|0] === '1' ? 1 : 0;
+}
+function isWall(x, y) { return cell(x, y) === 1; }
+
+// Snap a point to the centre of the nearest open floor cell (BFS outward).
+function nearestFloor(x, y) {
+  const cx = Math.floor(x), cy = Math.floor(y);
+  if (!isWall(cx + 0.5, cy + 0.5)) return { x: cx + 0.5, y: cy + 0.5 };
+  for (let r = 1; r < Math.max(MAP_W, MAP_H); r++) {
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+      const nx = cx + dx, ny = cy + dy;
+      if (nx > 0 && ny > 0 && nx < MAP_W - 1 && ny < MAP_H - 1 && cell(nx + 0.5, ny + 0.5) === 0)
+        return { x: nx + 0.5, y: ny + 0.5 };
+    }
+  }
+  return { x: 13.5, y: 13.5 };
+}
+
+// ---------- Player ----------
+const player = {
+  x: 2.5, y: 1.5, dir: Math.PI / 2,
+  speed: 0,
+};
+const PLAYER_START = { x: 2.5, y: 1.5, dir: Math.PI / 2 };
+const FOV = Math.PI / 3;       // 60°
+const MOVE = 2.6;              // units / sec
+const RUN_MULT = 1.7;
+
+// ---------- Input ----------
+const keys = {};
+let pointerLocked = false;
+let mouseSens = 0.0022;
+
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'KeyF') toggleFlashlight();
+  if (e.code === 'KeyE') interact();
+  if (e.code === 'Escape') togglePause();
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+document.addEventListener('mousemove', e => {
+  if (pointerLocked && state === 'play') {
+    player.dir += e.movementX * mouseSens;
+  }
+});
+canvas.addEventListener('click', () => {
+  if (state === 'play' && !pointerLocked) canvas.requestPointerLock();
+});
+document.addEventListener('pointerlockchange', () => {
+  pointerLocked = document.pointerLockElement === canvas;
+});
+
+// ---------- Flashlight / battery / sanity ----------
+let flashlightOn = true;
+let battery = 100;       // %
+let sanity = 100;        // %
+const FUSE_TOTAL = 4;
+let fusesCollected = 0;
+let powerRestored = false;
+
+function toggleFlashlight() {
+  if (state !== 'play') return;
+  if (battery <= 0) { flashlightOn = false; return; }
+  flashlightOn = !flashlightOn;
+  sfxClick();
+}
+
+// ---------- Entities ----------
+// Sprites: fuses, battery packs, notes, the exit panel, the monster.
+let sprites = [];
+function buildSprites() {
+  sprites = [];
+  // Fuse pickups scattered in far corners of the maze
+  const fuseSpots = [[24.5,2.5],[2.5,25.5],[26.5,26.5],[13.5,13.5]];
+  fuseSpots.forEach(p => sprites.push({type:'fuse', x:p[0], y:p[1], active:true}));
+  // Battery packs
+  [[8.5,6.5],[20.5,9.5],[5.5,18.5],[22.5,22.5],[15.5,4.5]].forEach(p =>
+    sprites.push({type:'battery', x:p[0], y:p[1], active:true}));
+  // Notes (lore)
+  const notes = [
+    "День 3. Свет гаснет каждую ночь. Доктор сказал — генератор. Но генератор в подвале, а звуки идут сверху.",
+    "Оно не выносит свет. Но если светить слишком долго — оно запоминает тебя. Я видел, как оно запомнило Марту.",
+    "Четыре предохранителя. Щит у западной стены. Без них дверь не откроется. Я спрятал их подальше от НЕГО.",
+    "Если читаешь это — беги. Не прячься в углах. В углах оно и живёт. Свет, движение, свет, движение. Не останавливайся.",
+    "Я слышу его шёпот даже сейчас. Оно зовёт меня по имени. Скоро я перестану бояться. Тогда оно меня заберёт.",
+  ];
+  const noteSpots = [[3.5,3.5],[18.5,2.5],[10.5,20.5],[25.5,15.5],[12.5,25.5]];
+  notes.forEach((t,i) => sprites.push({type:'note', x:noteSpots[i][0], y:noteSpots[i][1], active:true, text:t}));
+  // Exit panel (fuse box)
+  sprites.push({type:'panel', x:1.6, y:26.5, active:true});
+  // Exit door (only opens after power restored) at top-left near spawn corridor
+  sprites.push({type:'exit', x:1.5, y:1.5, active:false});
+
+  // Ensure no pickup is stuck inside a wall — snap to nearest floor.
+  for (const s of sprites) {
+    if (isWall(s.x, s.y)) { const p = nearestFloor(s.x, s.y); s.x = p.x; s.y = p.y; }
+  }
+}
+
+// Monster
+const monster = {
+  x: 26.5, y: 1.5, active: true,
+  speed: 1.45, state: 'wander', // wander | hunt | retreat
+  target: null, seenTimer: 0, lightExposure: 0,
+  reposTimer: 0,
+};
+
+// ---------- Game state ----------
+let state = 'menu';   // menu | how | play | pause | note | win | lose
+let lastTime = 0;
+let msgTimer = 0;
+let deathReason = "";
+
+// ---------- Rendering buffers ----------
+const zBuffer = [];
+
+// ---------- Main loop ----------
+function frame(t) {
+  const dt = Math.min(0.05, (t - lastTime) / 1000) || 0;
+  lastTime = t;
+  if (state === 'play') {
+    update(dt);
+    render();
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---------- Update ----------
+function update(dt) {
+  handleMovement(dt);
+  updateBattery(dt);
+  updateSanity(dt);
+  updateMonster(dt);
+  checkProximity();
+  updateAudio(dt);
+  if (msgTimer > 0) { msgTimer -= dt; if (msgTimer <= 0) hideMessage(); }
+}
+
+function handleMovement(dt) {
+  let mv = 0, strafe = 0;
+  if (keys['KeyW'] || keys['ArrowUp']) mv += 1;
+  if (keys['KeyS'] || keys['ArrowDown']) mv -= 1;
+  if (keys['KeyA']) strafe -= 1;
+  if (keys['KeyD']) strafe += 1;
+  if (keys['ArrowLeft']) player.dir -= 1.8 * dt;
+  if (keys['ArrowRight']) player.dir += 1.8 * dt;
+
+  const running = (keys['ShiftLeft'] || keys['ShiftRight']) && mv > 0;
+  let spd = MOVE * (running ? RUN_MULT : 1) * dt;
+  // Low sanity slows you & adds sway handled in render
+  if (sanity < 25) spd *= 0.78;
+
+  const cosD = Math.cos(player.dir), sinD = Math.sin(player.dir);
+  let nx = player.x + (cosD * mv + Math.cos(player.dir + Math.PI/2) * strafe) * spd;
+  let ny = player.y + (sinD * mv + Math.sin(player.dir + Math.PI/2) * strafe) * spd;
+
+  const r = 0.18;
+  if (!isWall(nx + Math.sign(cosD*mv+Math.cos(player.dir+Math.PI/2)*strafe)*r, player.y))
+    if (!isWall(nx, player.y)) player.x = nx;
+  if (!isWall(player.x, ny)) player.y = ny;
+
+  player.speed = (Math.abs(mv) + Math.abs(strafe)) * (running ? RUN_MULT : 1);
+}
+
+function updateBattery(dt) {
+  if (flashlightOn) {
+    battery -= dt * 1.9;
+    if (battery <= 0) { battery = 0; flashlightOn = false; showMessage("Фонарь сел..."); }
+  }
+  document.getElementById('battFill').style.width = battery + '%';
+  document.getElementById('battFill').style.background =
+    battery < 20 ? '#8f2f2f' : battery < 50 ? '#8f7f2f' : '#2f8f2f';
+}
+
+function updateSanity(dt) {
+  // Darkness drains sanity; light + safety restores slowly
+  const monDist = Math.hypot(monster.x - player.x, monster.y - player.y);
+  let drain = 0;
+  if (!flashlightOn) drain += 3.2;
+  if (monDist < 5 && monster.state === 'hunt') drain += 6;
+  if (flashlightOn && monDist > 7) drain -= 2.2; // recover
+  sanity = Math.max(0, Math.min(100, sanity - drain * dt));
+  if (sanity <= 0) die("Тьма поглотила твой разум. Ты больше не помнишь, кто ты.");
+  const f = document.getElementById('sanFill');
+  f.style.width = sanity + '%';
+  f.style.background = sanity < 25 ? '#9a1f6a' : '#6a3aa0';
+  // blood overlay intensity
+  document.getElementById('bloodOverlay').style.opacity = (1 - sanity/100) * 0.9;
+}
+
+// ---------- Monster AI ----------
+function lineClear(x0,y0,x1,y1) {
+  // DDA-ish wall check between two points
+  const steps = Math.ceil(Math.hypot(x1-x0,y1-y0) * 4);
+  for (let i = 1; i < steps; i++) {
+    const tt = i/steps;
+    if (isWall(x0 + (x1-x0)*tt, y0 + (y1-y0)*tt)) return false;
+  }
+  return true;
+}
+
+function updateMonster(dt) {
+  if (!monster.active) return;
+  const dx = player.x - monster.x, dy = player.y - monster.y;
+  const dist = Math.hypot(dx, dy);
+  const visible = lineClear(monster.x, monster.y, player.x, player.y);
+
+  // Light exposure — flashlight pointed roughly at monster pushes it back
+  let lit = false;
+  if (flashlightOn && visible && dist < 8) {
+    const ang = Math.atan2(dy, dx);
+    let diff = Math.abs(((ang - player.dir + Math.PI*3) % (Math.PI*2)) - Math.PI);
+    if (diff < FOV*0.55) lit = true;
+  }
+
+  if (lit) {
+    monster.lightExposure += dt;
+    monster.state = 'retreat';
+  } else {
+    monster.lightExposure = Math.max(0, monster.lightExposure - dt*0.5);
+  }
+
+  // Detection: visible & (close OR in dark) triggers hunt
+  const detectRange = flashlightOn ? 9 : 13;
+  if (visible && dist < detectRange && !lit) {
+    monster.state = 'hunt';
+    monster.seenTimer = 3.5;
+    monster.target = {x: player.x, y: player.y};
+  } else if (monster.seenTimer > 0) {
+    monster.seenTimer -= dt;
+  } else if (monster.state !== 'retreat') {
+    monster.state = 'wander';
+  }
+
+  // If lit too long, it teleports away (it "remembers" and repositions)
+  if (monster.lightExposure > 2.6) {
+    repositionMonster();
+    monster.lightExposure = 0;
+    monster.state = 'wander';
+  }
+
+  let mv = 0, tx = monster.x, ty = monster.y;
+  if (monster.state === 'hunt' && monster.target) {
+    tx = monster.target.x; ty = monster.target.y;
+    mv = monster.speed * (powerRestored ? 1.25 : 1);
+  } else if (monster.state === 'retreat') {
+    // move away from player
+    const a = Math.atan2(monster.y - player.y, monster.x - player.x);
+    tx = monster.x + Math.cos(a); ty = monster.y + Math.sin(a);
+    mv = monster.speed * 1.3;
+  } else {
+    // wander toward a roaming target
+    monster.reposTimer -= dt;
+    if (!monster.wanderTarget || monster.reposTimer <= 0 ||
+        Math.hypot(monster.x-monster.wanderTarget.x, monster.y-monster.wanderTarget.y) < 0.6) {
+      monster.wanderTarget = randomFloor();
+      monster.reposTimer = 5 + Math.random()*4;
+    }
+    tx = monster.wanderTarget.x; ty = monster.wanderTarget.y;
+    mv = monster.speed * 0.55;
+  }
+
+  // Greedy step with wall avoidance
+  const ang = Math.atan2(ty - monster.y, tx - monster.x);
+  const stepX = Math.cos(ang) * mv * dt;
+  const stepY = Math.sin(ang) * mv * dt;
+  if (!isWall(monster.x + stepX, monster.y)) monster.x += stepX;
+  else if (!isWall(monster.x, monster.y + Math.sin(ang+0.6)*mv*dt)) monster.y += Math.sin(ang+0.6)*mv*dt;
+  if (!isWall(monster.x, monster.y + stepY)) monster.y += stepY;
+  else if (!isWall(monster.x + Math.cos(ang+0.6)*mv*dt, monster.y)) monster.x += Math.cos(ang+0.6)*mv*dt;
+
+  // Caught player?
+  if (dist < 0.55) {
+    die("ОНО нашло тебя. Последнее, что ты увидел — улыбку в темноте.");
+  }
+}
+
+function repositionMonster() {
+  // place far from the player but reachable
+  for (let i = 0; i < 40; i++) {
+    const p = randomFloor();
+    if (Math.hypot(p.x - player.x, p.y - player.y) > 8) { monster.x = p.x; monster.y = p.y; return; }
+  }
+}
+function randomFloor() {
+  for (let i = 0; i < 100; i++) {
+    const x = 1 + Math.random()*(MAP_W-2);
+    const y = 1 + Math.random()*(MAP_H-2);
+    if (!isWall(x, y)) return {x, y};
+  }
+  return {x: 13.5, y: 13.5};
+}
+
+// ---------- Proximity / interaction ----------
+let nearSprite = null;
+function checkProximity() {
+  nearSprite = null;
+  let best = 1.0;
+  for (const s of sprites) {
+    if (!s.active) continue;
+    if (s.type === 'exit' && !powerRestored) continue;
+    const d = Math.hypot(s.x - player.x, s.y - player.y);
+    if (d < best) { best = d; nearSprite = s; }
+  }
+  const hint = document.getElementById('interactHint');
+  if (nearSprite) {
+    let txt = '';
+    if (nearSprite.type === 'fuse') txt = '[E] Взять предохранитель';
+    else if (nearSprite.type === 'battery') txt = '[E] Взять батарею';
+    else if (nearSprite.type === 'note') txt = '[E] Прочитать записку';
+    else if (nearSprite.type === 'panel') txt = powerRestored ? 'Питание восстановлено' :
+      (fusesCollected >= FUSE_TOTAL ? '[E] Вставить предохранители' : `Нужно ещё ${FUSE_TOTAL-fusesCollected} предохранителя`);
+    else if (nearSprite.type === 'exit') txt = '[E] Выйти наружу';
+    hint.textContent = txt;
+    hint.style.opacity = 1;
+  } else hint.style.opacity = 0;
+}
+
+function interact() {
+  if (state === 'note') { closeNote(); return; }
+  if (state !== 'play' || !nearSprite) return;
+  const s = nearSprite;
+  if (s.type === 'fuse') {
+    s.active = false; fusesCollected++; sfxPickup();
+    document.getElementById('fuseCount').textContent = fusesCollected;
+    showMessage(`Предохранитель найден (${fusesCollected}/4)`);
+  } else if (s.type === 'battery') {
+    s.active = false; battery = Math.min(100, battery + 45); sfxPickup();
+    showMessage("Батарея заряжена");
+  } else if (s.type === 'note') {
+    openNote(s.text);
+  } else if (s.type === 'panel') {
+    if (powerRestored) return;
+    if (fusesCollected >= FUSE_TOTAL) {
+      powerRestored = true; sfxPower();
+      sprites.find(x => x.type === 'exit').active = true;
+      showMessage("Гул генератора... Выход открыт. БЕГИ.");
+      monster.speed *= 1.25; monster.state = 'hunt';
+      monster.target = {x: player.x, y: player.y};
+    } else {
+      showMessage(`Не хватает предохранителей: ${fusesCollected}/4`);
+    }
+  } else if (s.type === 'exit') {
+    win();
+  }
+}
+
+// ---------- Rendering ----------
+const TEX = 64;
+function render() {
+  // Ceiling / floor gradient
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  // subtle floor sheen
+  const grad = ctx.createLinearGradient(0, H/2, 0, H);
+  grad.addColorStop(0, '#050505');
+  grad.addColorStop(1, '#0d0b0a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, H/2, W, H/2);
+
+  const numRays = Math.min(W, 640);
+  const colW = W / numRays;
+  const flashRange = flashlightOn ? 9.5 : 2.2;     // how far you can see
+  const ambient = 1.4;                              // base dark distance
+
+  for (let i = 0; i < numRays; i++) {
+    const cameraX = 2 * i / numRays - 1;
+    const rayAngle = player.dir + Math.atan(cameraX * Math.tan(FOV/2));
+    const ray = castRay(rayAngle);
+    zBuffer[i] = ray.dist * Math.cos(rayAngle - player.dir);
+
+    const corrected = zBuffer[i];
+    const lineH = Math.min(H * 3, (H / corrected));
+    const top = (H - lineH) / 2;
+
+    // Flashlight cone: brightness depends on how centered the ray is + distance
+    const coneFocus = 1 - Math.min(1, Math.abs(cameraX) / 0.9);
+    let bright;
+    if (flashlightOn) {
+      const reach = flashRange * (0.35 + 0.65 * coneFocus);
+      bright = clamp(1 - corrected / reach, 0, 1);
+      bright = Math.max(bright, clamp(1 - corrected/ambient, 0, 1)*0.25);
+    } else {
+      bright = clamp(1 - corrected / (ambient + 0.6), 0, 1) * 0.55;
+    }
+    // flicker when low battery
+    if (flashlightOn && battery < 25) bright *= (0.6 + 0.4*Math.random());
+    // sanity warps brightness
+    bright *= (0.55 + 0.45 * (sanity/100));
+
+    // wall colour: greyish with red tint deeper in
+    const side = ray.side;
+    let base = side === 1 ? 0.72 : 1.0;
+    let r = 70, g = 66, b = 62;
+    // bloodstains pseudo-random by cell
+    const stain = ((ray.mapX*7 + ray.mapY*13) % 9);
+    if (stain === 0) { r = 95; g = 30; b = 28; }
+    const v = bright * base;
+    ctx.fillStyle = `rgb(${(r*v)|0},${(g*v)|0},${(b*v)|0})`;
+    ctx.fillRect(i*colW, top, colW+1, lineH);
+
+    // floor shading near walls (cheap)
+    if (v > 0.05) {
+      ctx.fillStyle = `rgba(20,16,14,${0.4})`;
+    }
+  }
+
+  renderSprites(numRays, colW, flashRange);
+  renderFlashlightVignette();
+  applySanityFX();
+}
+
+function castRay(angle) {
+  const sin = Math.sin(angle), cos = Math.cos(angle);
+  let mapX = player.x | 0, mapY = player.y | 0;
+  const deltaX = Math.abs(1 / cos), deltaY = Math.abs(1 / sin);
+  let stepX, stepY, sideX, sideY;
+  if (cos < 0) { stepX = -1; sideX = (player.x - mapX) * deltaX; }
+  else { stepX = 1; sideX = (mapX + 1 - player.x) * deltaX; }
+  if (sin < 0) { stepY = -1; sideY = (player.y - mapY) * deltaY; }
+  else { stepY = 1; sideY = (mapY + 1 - player.y) * deltaY; }
+  let side = 0, hit = false, guard = 0;
+  while (!hit && guard++ < 64) {
+    if (sideX < sideY) { sideX += deltaX; mapX += stepX; side = 0; }
+    else { sideY += deltaY; mapY += stepY; side = 1; }
+    if (cell(mapX, mapY) === 1) hit = true;
+  }
+  let dist;
+  if (side === 0) dist = (mapX - player.x + (1 - stepX) / 2) / cos;
+  else dist = (mapY - player.y + (1 - stepY) / 2) / sin;
+  return { dist: Math.max(0.01, dist), side: side === 1 ? 1 : 0, mapX, mapY };
+}
+
+function renderSprites(numRays, colW, flashRange) {
+  // gather visible sprites incl. monster
+  const list = sprites.filter(s => s.active).map(s => ({...s}));
+  if (monster.active) list.push({type:'monster', x:monster.x, y:monster.y});
+
+  // sort far -> near
+  list.forEach(s => s._d = Math.hypot(s.x-player.x, s.y-player.y));
+  list.sort((a,b) => b._d - a._d);
+
+  for (const s of list) {
+    const dx = s.x - player.x, dy = s.y - player.y;
+    const angTo = Math.atan2(dy, dx);
+    let rel = ((angTo - player.dir + Math.PI*3) % (Math.PI*2)) - Math.PI;
+    if (Math.abs(rel) > FOV*0.75) continue;
+    const dist = s._d;
+    if (dist < 0.3) continue;
+    const screenX = (0.5 + Math.tan(rel) / (2*Math.tan(FOV/2))) * W;
+    const size = Math.min(H*2.2, H / dist);
+    drawSprite(s, screenX, size, dist, flashRange, numRays);
+  }
+}
+
+function spriteLight(dist, flashRange) {
+  let b;
+  if (flashlightOn) b = clamp(1 - dist/(flashRange*0.8), 0, 1);
+  else b = clamp(1 - dist/2.2, 0, 1)*0.5;
+  if (flashlightOn && battery < 25) b *= (0.6+0.4*Math.random());
+  return b;
+}
+
+function drawSprite(s, sx, size, dist, flashRange, numRays) {
+  const b = spriteLight(dist, flashRange);
+  if (b <= 0.02 && s.type !== 'monster') return;
+  const top = (H - size)/2 + size*0.15;
+  const half = size*0.18;
+
+  // occlusion check against zbuffer column
+  const col = Math.floor(sx / (W/numRays));
+  if (col >= 0 && col < numRays && zBuffer[col] < dist - 0.2 && s.type!=='monster') {
+    // partially hidden — still allow monster to loom
+  }
+
+  ctx.save();
+  if (s.type === 'monster') drawMonster(sx, size, dist, flashRange);
+  else if (s.type === 'fuse') drawIcon(sx, top, half, b, '#d8a000', '⚡');
+  else if (s.type === 'battery') drawIcon(sx, top, half, b, '#2f8f2f', '▮');
+  else if (s.type === 'note') drawIcon(sx, top, half, b, '#cfc6a8', '✉');
+  else if (s.type === 'panel') drawIcon(sx, top, half*1.4, b, powerRestored?'#2f8f2f':'#7a5500', '▣');
+  else if (s.type === 'exit') drawIcon(sx, top, half*1.6, b, '#3fa0ff', '🚪');
+  ctx.restore();
+}
+
+function drawIcon(sx, top, half, b, color, glyph) {
+  ctx.globalAlpha = clamp(b,0,1);
+  // glow
+  ctx.shadowColor = color; ctx.shadowBlur = half*0.8;
+  ctx.fillStyle = color;
+  ctx.font = `${(half*2)|0}px serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(glyph, sx, top+half);
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+}
+
+function drawMonster(sx, size, dist, flashRange) {
+  // Pale, tall humanoid. Visibility increases as it nears even in dark.
+  const vis = clamp(1 - dist/9, 0.12, 1);
+  const flicker = 0.8 + 0.2*Math.random();
+  const h = size*1.4, w = size*0.42;
+  const cx = sx, topY = H/2 - h*0.5;
+  ctx.globalAlpha = vis * flicker;
+
+  // body
+  const bodyGrad = ctx.createLinearGradient(0, topY, 0, topY+h);
+  bodyGrad.addColorStop(0, `rgba(200,200,195,${0.85})`);
+  bodyGrad.addColorStop(1, `rgba(40,38,40,0.9)`);
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.moveTo(cx, topY);
+  ctx.quadraticCurveTo(cx - w*0.7, topY+h*0.5, cx - w*0.25, topY+h);
+  ctx.lineTo(cx + w*0.25, topY+h);
+  ctx.quadraticCurveTo(cx + w*0.7, topY+h*0.5, cx, topY);
+  ctx.fill();
+
+  // head
+  ctx.fillStyle = `rgba(225,222,215,${0.95})`;
+  ctx.beginPath();
+  ctx.ellipse(cx, topY+h*0.12, w*0.34, h*0.16, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // hollow eyes
+  ctx.fillStyle = `rgba(10,0,0,1)`;
+  const ey = topY+h*0.11, ew = w*0.1, eh = h*0.06, eo = w*0.13;
+  ctx.beginPath(); ctx.ellipse(cx-eo, ey, ew, eh, 0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx+eo, ey, ew, eh, 0,0,Math.PI*2); ctx.fill();
+  // faint red glints
+  ctx.fillStyle = `rgba(180,0,0,${0.6+0.4*Math.random()})`;
+  ctx.beginPath(); ctx.arc(cx-eo, ey, ew*0.3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx+eo, ey, ew*0.3,0,Math.PI*2); ctx.fill();
+
+  // mouth (only when close)
+  if (dist < 4) {
+    ctx.strokeStyle = `rgba(60,0,0,0.8)`; ctx.lineWidth = Math.max(1,size*0.01);
+    ctx.beginPath();
+    ctx.moveTo(cx-w*0.18, topY+h*0.2);
+    ctx.quadraticCurveTo(cx, topY+h*0.26, cx+w*0.18, topY+h*0.2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function renderFlashlightVignette() {
+  // Darken outside the flashlight cone with a radial mask
+  const g = ctx.createRadialGradient(W/2, H/2, flashlightOn? H*0.18 : H*0.05,
+                                     W/2, H/2, flashlightOn? H*0.75 : H*0.35);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.96)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+}
+
+let fxTime = 0;
+function applySanityFX() {
+  fxTime += 0.016;
+  if (sanity < 50) {
+    // creeping desaturation + pulsing red edges handled by bloodOverlay
+    if (sanity < 30 && Math.random() < 0.02) {
+      // brief glitch flash
+      ctx.fillStyle = `rgba(120,0,0,${0.06})`;
+      ctx.fillRect(0,0,W,H);
+    }
+    // subtle shake via translate next frame
+    if (sanity < 20) {
+      const s = (1-sanity/20)*4;
+      canvas.style.transform = `translate(${(Math.random()-0.5)*s}px,${(Math.random()-0.5)*s}px)`;
+    }
+  } else {
+    canvas.style.transform = '';
+  }
+}
+
+function clamp(v,a,b){return v<a?a:v>b?b:v;}
+
+// ============================================================
+//  AUDIO  (procedural, WebAudio)
+// ============================================================
+let actx = null, master = null;
+let droneNodes = null, heartGain = null, heartTimer = 0;
+function initAudio() {
+  if (actx) return;
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  master = actx.createGain();
+  master.gain.value = 0.6;
+  master.connect(actx.destination);
+  startDrone();
+}
+function startDrone() {
+  // two detuned low oscillators + filtered noise bed
+  const g = actx.createGain(); g.gain.value = 0.12; g.connect(master);
+  const o1 = actx.createOscillator(); o1.type='sine'; o1.frequency.value=55;
+  const o2 = actx.createOscillator(); o2.type='sine'; o2.frequency.value=56.6;
+  o1.connect(g); o2.connect(g); o1.start(); o2.start();
+  // noise wind
+  const buf = actx.createBuffer(1, actx.sampleRate*2, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i=0;i<d.length;i++) d[i]=(Math.random()*2-1);
+  const noise = actx.createBufferSource(); noise.buffer=buf; noise.loop=true;
+  const nf = actx.createBiquadFilter(); nf.type='lowpass'; nf.frequency.value=320;
+  const ng = actx.createGain(); ng.gain.value=0.05;
+  noise.connect(nf); nf.connect(ng); ng.connect(master); noise.start();
+  droneNodes = {g, o1, o2, ng, nf};
+  heartGain = actx.createGain(); heartGain.gain.value=0; heartGain.connect(master);
+}
+function updateAudio(dt) {
+  if (!actx) return;
+  const monDist = Math.hypot(monster.x-player.x, monster.y-player.y);
+  // heartbeat rate & volume scale with closeness + hunt
+  const close = clamp(1 - monDist/9, 0, 1);
+  const intensity = monster.state==='hunt' ? close*1.3 : close*0.7;
+  // drone rises with low sanity
+  if (droneNodes) droneNodes.ng.gain.value = 0.04 + (1-sanity/100)*0.12 + intensity*0.05;
+  // heartbeat scheduler
+  heartTimer -= dt;
+  const interval = clamp(1.1 - intensity*0.75, 0.32, 1.1);
+  if (intensity > 0.08 && heartTimer <= 0) {
+    playHeartbeat(0.25 + intensity*0.5);
+    heartTimer = interval;
+  }
+  // occasional whisper when sanity low
+  if (sanity < 45 && Math.random() < 0.004) playWhisper();
+  // monster growl when hunting & near
+  if (monster.state==='hunt' && monDist < 6 && Math.random() < 0.01) playGrowl();
+}
+function playHeartbeat(vol) {
+  const t = actx.currentTime;
+  for (const off of [0, 0.16]) {
+    const o = actx.createOscillator(); o.type='sine'; o.frequency.value=58;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0, t+off);
+    g.gain.linearRampToValueAtTime(vol, t+off+0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t+off+0.18);
+    o.connect(g); g.connect(master); o.start(t+off); o.stop(t+off+0.2);
+  }
+}
+function playWhisper() {
+  const t = actx.currentTime;
+  const buf = actx.createBuffer(1, actx.sampleRate*0.7, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i=0;i<d.length;i++){ const env=Math.sin(Math.PI*i/d.length); d[i]=(Math.random()*2-1)*env; }
+  const src=actx.createBufferSource(); src.buffer=buf;
+  const f=actx.createBiquadFilter(); f.type='bandpass'; f.frequency.value=1400; f.Q.value=6;
+  const g=actx.createGain(); g.gain.value=0.18;
+  src.connect(f); f.connect(g); g.connect(master); src.start();
+}
+function playGrowl() {
+  const t = actx.currentTime;
+  const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.setValueAtTime(70,t);
+  o.frequency.exponentialRampToValueAtTime(40, t+0.6);
+  const f=actx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=400;
+  const g=actx.createGain();
+  g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.25,t+0.05);
+  g.gain.exponentialRampToValueAtTime(0.001,t+0.7);
+  o.connect(f); f.connect(g); g.connect(master); o.start(t); o.stop(t+0.7);
+}
+function sfxClick(){ if(!actx)return; const t=actx.currentTime;
+  const o=actx.createOscillator(); o.type='square'; o.frequency.value=900;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.08,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.05);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t+0.06); }
+function sfxPickup(){ if(!actx)return; const t=actx.currentTime;
+  const o=actx.createOscillator(); o.type='triangle'; o.frequency.setValueAtTime(500,t);
+  o.frequency.exponentialRampToValueAtTime(1100,t+0.12);
+  const g=actx.createGain(); g.gain.setValueAtTime(0.12,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.2);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t+0.2); }
+function sfxPower(){ if(!actx)return; const t=actx.currentTime;
+  const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.setValueAtTime(120,t);
+  o.frequency.linearRampToValueAtTime(220,t+1.2);
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0,t); g.gain.linearRampToValueAtTime(0.18,t+0.3);
+  g.gain.linearRampToValueAtTime(0.05,t+1.4);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t+1.5); }
+function sfxScare(){ if(!actx)return; const t=actx.currentTime;
+  // violin-stab style cluster
+  [880,1320,1760,2200].forEach((f,i)=>{
+    const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.value=f*(1+ (Math.random()-0.5)*0.02);
+    const g=actx.createGain(); g.gain.setValueAtTime(0.0,t);
+    g.gain.linearRampToValueAtTime(0.18,t+0.01); g.gain.exponentialRampToValueAtTime(0.001,t+1.1);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t+1.2);
+  });
+  // low boom
+  const o=actx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(120,t);
+  o.frequency.exponentialRampToValueAtTime(30,t+0.8);
+  const g=actx.createGain(); g.gain.setValueAtTime(0.5,t); g.gain.exponentialRampToValueAtTime(0.001,t+1);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t+1);
+}
+
+// ============================================================
+//  UI / STATE
+// ============================================================
+function showMessage(txt){
+  const m = document.getElementById('message');
+  m.textContent = txt; m.style.opacity = 1; msgTimer = 3;
+}
+function hideMessage(){ document.getElementById('message').style.opacity = 0; }
+
+const elMenu=document.getElementById('menu'),
+      elHow=document.getElementById('howto'),
+      elPause=document.getElementById('pause'),
+      elHud=document.getElementById('hud'),
+      elNote=document.getElementById('noteScreen'),
+      elWin=document.getElementById('win'),
+      elLose=document.getElementById('lose'),
+      elJump=document.getElementById('jumpscare'),
+      elFade=document.getElementById('fade');
+
+function hideAllScreens(){ [elMenu,elHow,elPause,elNote,elWin,elLose].forEach(e=>e.classList.add('hidden')); }
+
+document.getElementById('startBtn').onclick = startGame;
+document.getElementById('howBtn').onclick = ()=>{ elMenu.classList.add('hidden'); elHow.classList.remove('hidden'); };
+document.getElementById('backBtn').onclick = ()=>{ elHow.classList.add('hidden'); elMenu.classList.remove('hidden'); };
+document.getElementById('resumeBtn').onclick = resumeGame;
+document.getElementById('quitBtn').onclick = toMenu;
+document.getElementById('closeNote').onclick = closeNote;
+document.getElementById('winMenu').onclick = toMenu;
+document.getElementById('retryBtn').onclick = startGame;
+document.getElementById('loseMenu').onclick = toMenu;
+
+function startGame(){
+  initAudio();
+  if (actx && actx.state === 'suspended') actx.resume();
+  // reset
+  player.x=PLAYER_START.x; player.y=PLAYER_START.y; player.dir=PLAYER_START.dir;
+  battery=100; sanity=100; fusesCollected=0; powerRestored=false; flashlightOn=true;
+  buildSprites();
+  const mp = nearestFloor(26.5, 1.5); monster.x=mp.x; monster.y=mp.y;
+  monster.active=true; monster.state='wander';
+  monster.speed=1.45; monster.lightExposure=0; monster.seenTimer=0; monster.wanderTarget=null;
+  document.getElementById('fuseCount').textContent='0';
+  hideAllScreens();
+  elHud.classList.remove('hidden');
+  elJump.classList.add('hidden');
+  state='play';
+  canvas.requestPointerLock();
+  showMessage("Где я... Свет погас. Надо найти выход.");
+}
+
+function togglePause(){
+  if (state==='play'){ state='pause'; document.exitPointerLock(); elPause.classList.remove('hidden'); }
+  else if (state==='pause'){ resumeGame(); }
+  else if (state==='note'){ closeNote(); }
+}
+function resumeGame(){ elPause.classList.add('hidden'); state='play'; canvas.requestPointerLock(); }
+function toMenu(){
+  hideAllScreens(); elHud.classList.add('hidden'); elJump.classList.add('hidden');
+  document.getElementById('bloodOverlay').style.opacity=0;
+  canvas.style.transform='';
+  state='menu'; if(document.pointerLockElement) document.exitPointerLock();
+  elMenu.classList.remove('hidden');
+}
+
+function openNote(text){
+  state='note'; document.exitPointerLock();
+  document.getElementById('noteText').textContent = '« '+text+' »';
+  elNote.classList.remove('hidden');
+}
+function closeNote(){
+  elNote.classList.add('hidden'); state='play'; canvas.requestPointerLock();
+}
+
+function win(){
+  state='win'; document.exitPointerLock();
+  elHud.classList.add('hidden');
+  document.getElementById('bloodOverlay').style.opacity=0;
+  elWin.classList.remove('hidden');
+}
+
+// ---------- Death / jumpscare ----------
+function die(reason){
+  if (state!=='play') return;
+  deathReason = reason;
+  state='lose'; document.exitPointerLock();
+  sfxScare();
+  elHud.classList.add('hidden');
+  playJumpscare();
+}
+
+function playJumpscare(){
+  elJump.classList.remove('hidden');
+  const jc = document.getElementById('jsCanvas');
+  jc.width = window.innerWidth; jc.height = window.innerHeight;
+  const c = jc.getContext('2d');
+  let frames = 0;
+  const total = 50;
+  function jf(){
+    const w=jc.width,h=jc.height;
+    c.fillStyle='#000'; c.fillRect(0,0,w,h);
+    // violent shaking giant face
+    const ox=(Math.random()-0.5)*40, oy=(Math.random()-0.5)*40;
+    const cx=w/2+ox, cy=h/2+oy;
+    const scale = Math.min(w,h)*0.0065 * (0.9+0.2*Math.random());
+    c.save(); c.translate(cx,cy); c.scale(scale,scale);
+    // face
+    c.fillStyle = `rgb(${200+Math.random()*40|0},${190+Math.random()*30|0},${185})`;
+    c.beginPath(); c.ellipse(0,0,60,85,0,0,Math.PI*2); c.fill();
+    // eyes — black sockets with red
+    c.fillStyle='#000';
+    c.beginPath(); c.ellipse(-22,-15,14,20,0,0,Math.PI*2); c.fill();
+    c.beginPath(); c.ellipse(22,-15,14,20,0,0,Math.PI*2); c.fill();
+    c.fillStyle=`rgba(${180+Math.random()*70|0},0,0,1)`;
+    c.beginPath(); c.arc(-22,-12,5,0,Math.PI*2); c.fill();
+    c.beginPath(); c.arc(22,-12,5,0,Math.PI*2); c.fill();
+    // gaping mouth
+    c.fillStyle='#100';
+    c.beginPath(); c.ellipse(0,45,26,38*(0.6+0.4*Math.random()),0,0,Math.PI*2); c.fill();
+    // teeth
+    c.fillStyle='#cfc6b0';
+    for(let i=-3;i<=3;i++){ c.fillRect(i*7-2, 20, 4, 10); }
+    c.restore();
+    // red flash overlay
+    c.fillStyle=`rgba(120,0,0,${Math.random()*0.4})`;
+    c.fillRect(0,0,w,h);
+    // static
+    for(let i=0;i<300;i++){ c.fillStyle=`rgba(255,255,255,${Math.random()*0.15})`;
+      c.fillRect(Math.random()*w, Math.random()*h, 2,2); }
+    frames++;
+    if (frames<total) requestAnimationFrame(jf);
+    else showLose();
+  }
+  jf();
+}
+function showLose(){
+  elJump.classList.add('hidden');
+  document.getElementById('loseText').textContent = deathReason;
+  document.getElementById('bloodOverlay').style.opacity=0;
+  canvas.style.transform='';
+  elLose.classList.remove('hidden');
+}
+
+// keep showing menu until start
+</script>
+</body>
+</html>
